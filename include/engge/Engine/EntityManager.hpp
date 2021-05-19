@@ -1,10 +1,10 @@
 #pragma once
 #include <squirrel.h>
-#include "engge/Room/Room.hpp"
-#include "Engine.hpp"
-#include "Light.hpp"
-#include "engge/Entities/Objects/Object.hpp"
-#include "engge/System/Locator.hpp"
+#include <engge/Room/Room.hpp>
+#include <engge/Engine/Engine.hpp>
+#include <engge/Engine/Light.hpp>
+#include <engge/Entities/Object.hpp>
+#include <engge/System/Locator.hpp>
 
 namespace ng {
 class Actor;
@@ -32,14 +32,14 @@ private:
   static const int END_CALLBACKID = 10000000;
 
 public:
-  inline int getActorId() { return START_ACTORID + _actorId++; }
-  inline int getRoomId() { return START_ROOMID + _roomId++; }
-  inline int getObjectId() { return START_OBJECTID + _objectId++; }
-  inline int getLightId() { return START_LIGHTID + _lightId++; }
-  inline int getSoundId() { return START_SOUNDID + _soundId++; }
-  inline int getCallbackId() { return START_CALLBACKID + _callbackId++; }
-  inline void setCallbackId(int id) { _callbackId = id - START_CALLBACKID; }
-  inline int getThreadId() { return START_THREADID + _threadId++; }
+  inline int getActorId() { return START_ACTORID + m_actorId++; }
+  inline int getRoomId() { return START_ROOMID + m_roomId++; }
+  inline int getObjectId() { return START_OBJECTID + m_objectId++; }
+  inline int getLightId() { return START_LIGHTID + m_lightId++; }
+  inline int getSoundId() { return START_SOUNDID + m_soundId++; }
+  inline int getCallbackId() { return START_CALLBACKID + m_callbackId++; }
+  inline void setCallbackId(int id) { m_callbackId = id - START_CALLBACKID; }
+  inline int getThreadId() { return START_THREADID + m_threadId++; }
 
   static Actor *getActorFromId(int id);
   static Room *getRoomFromId(int id);
@@ -60,7 +60,8 @@ public:
   static Room *getRoom(HSQUIRRELVM v, SQInteger index);
   static Actor *getActor(HSQUIRRELVM v, SQInteger index);
   static SoundId *getSound(HSQUIRRELVM v, SQInteger index);
-  static SoundDefinition *getSoundDefinition(HSQUIRRELVM v, SQInteger index);
+  static std::shared_ptr<SoundDefinition> getSoundDefinition(HSQUIRRELVM v, SQInteger index);
+  static std::shared_ptr<SoundDefinition> getSoundDefinition(HSQUIRRELVM v, const std::string &name);
 
   static bool tryGetLight(HSQUIRRELVM v, SQInteger index, Light *&light);
 
@@ -75,13 +76,13 @@ private:
   static inline bool isBetween(int id, int min, int max) { return id >= min && id < max; }
 
 private:
-  int _actorId{0};
-  int _roomId{0};
-  int _objectId{0};
-  int _lightId{0};
-  int _soundId{0};
-  int _callbackId{0};
-  int _threadId{0};
+  int m_actorId{0};
+  int m_roomId{0};
+  int m_objectId{0};
+  int m_lightId{0};
+  int m_soundId{0};
+  int m_callbackId{0};
+  int m_threadId{0};
 };
 
 template<typename TScriptObject>
@@ -129,9 +130,9 @@ TScriptObject *EntityManager::getScriptObjectFromId(int id) {
 
   if (EntityManager::isLight(id)) {
     for (auto &&room : ng::Locator<ng::Engine>::get().getRooms()) {
-      for (auto &&light : room->getLights()) {
-        if (light->getId() == id)
-          return dynamic_cast<TScriptObject *>(light.get());
+      for (auto &light : room->getLights()) {
+        if (light.getId() == id)
+          return dynamic_cast<TScriptObject *>(&light);
       }
     }
     return nullptr;

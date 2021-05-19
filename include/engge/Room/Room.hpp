@@ -1,21 +1,31 @@
 #pragma once
 #include <vector>
-#include "engge/Graphics/SpriteSheet.hpp"
-#include <SFML/Graphics.hpp>
+#include <engge/Graphics/SpriteSheet.hpp>
 #include <squirrel.h>
-#include "engge/Scripting/ScriptObject.hpp"
+#include <ngf/System/TimeSpan.h>
+#include <ngf/Graphics/RenderTarget.h>
+#include <ngf/Graphics/Color.h>
+#include <engge/Scripting/ScriptObject.hpp>
+#include <engge/Graphics/LightingShader.h>
+
+namespace ngf {
+class Walkbox;
+class Graph;
+}
 
 namespace ng {
 class Entity;
-class Graph;
 class Light;
 class Object;
 class RoomScaling;
 class ResourceManager;
 class TextObject;
 class ThreadBase;
-class Walkbox;
 
+/// @brief Room effect used by roomEffect method
+///
+/// Only None, Ghost and BlackAndWhite are explicitly used.
+/// The others can be used with flashbackEffect settings.
 namespace RoomEffectConstants {
 static const int EFFECT_NONE = 0;
 static const int EFFECT_SEPIA = 1;
@@ -38,18 +48,20 @@ public:
   void load(const char *name);
   std::vector<std::unique_ptr<Object>> &getObjects();
   [[nodiscard]] const std::vector<std::unique_ptr<Object>> &getObjects() const;
-  std::vector<std::unique_ptr<Light>> &getLights();
+  [[nodiscard]] std::array<Light, LightingShader::MaxLights> &getLights();
+  [[nodiscard]] int getNumberLights() const;
+  LightingShader& getLightingShader();
 
-  void update(const sf::Time &elapsed);
-  void draw(sf::RenderTarget &target, const sf::Vector2f &cameraPos) const;
-  void drawForeground(sf::RenderTarget &target, const sf::Vector2f &cameraPos) const;
+  void update(const ngf::TimeSpan &elapsed);
+  void draw(ngf::RenderTarget &target, const glm::vec2 &cameraPos) const;
+  void drawForeground(ngf::RenderTarget &target, const glm::vec2 &cameraPos) const;
 
   void setWalkboxEnabled(const std::string &name, bool isEnabled);
-  [[nodiscard]] const Walkbox* getWalkbox(const std::string& name) const;
-  [[nodiscard]] std::vector<sf::Vector2f> calculatePath(sf::Vector2f start, sf::Vector2f end) const;
-  std::vector<Walkbox> &getWalkboxes();
-  std::vector<Walkbox> &getGraphWalkboxes();
-  [[nodiscard]] const Graph *getGraph() const;
+  [[nodiscard]] const ngf::Walkbox *getWalkbox(const std::string &name) const;
+  [[nodiscard]] std::vector<glm::vec2> calculatePath(glm::vec2 start, glm::vec2 end) const;
+  std::vector<ngf::Walkbox> &getWalkboxes();
+  std::vector<ngf::Walkbox> &getGraphWalkboxes();
+  [[nodiscard]] const ngf::Graph *getGraph() const;
 
   Object &createObject(const std::string &sheet, const std::vector<std::string> &anims);
   Object &createObject(const std::vector<std::string> &anims);
@@ -57,8 +69,8 @@ public:
   Object &createObject();
   TextObject &createTextObject(const std::string &fontName);
   void deleteObject(Object &textObject);
-  [[nodiscard]] sf::Vector2i getRoomSize() const;
-  [[nodiscard]] sf::Vector2i getScreenSize() const;
+  [[nodiscard]] glm::ivec2 getRoomSize() const;
+  [[nodiscard]] glm::ivec2 getScreenSize() const;
   [[nodiscard]] int32_t getFullscreen() const;
   [[nodiscard]] int32_t getScreenHeight() const;
   void setAsParallaxLayer(Entity *pEntity, int layer);
@@ -69,8 +81,8 @@ public:
 
   [[nodiscard]] const SpriteSheet &getSpriteSheet() const;
 
-  void setAmbientLight(sf::Color color);
-  [[nodiscard]] sf::Color getAmbientLight() const;
+  void setAmbientLight(ngf::Color color);
+  [[nodiscard]] ngf::Color getAmbientLight() const;
 
   void removeEntity(Entity *pEntity);
   std::vector<RoomScaling> &getScalings();
@@ -78,20 +90,20 @@ public:
   [[nodiscard]] float getRotation() const;
   void setRotation(float angle);
 
-  Light *createLight(sf::Color color, sf::Vector2i pos);
+  Light *createLight(ngf::Color color, glm::ivec2 pos);
   void exit();
 
   void setEffect(int shader);
   [[nodiscard]] int getEffect() const;
 
-  void setOverlayColor(sf::Color color);
-  [[nodiscard]] sf::Color getOverlayColor() const;
+  void setOverlayColor(ngf::Color color);
+  [[nodiscard]] ngf::Color getOverlayColor() const;
 
   void setPseudoRoom(bool pseudoRoom);
   [[nodiscard]] bool isPseudoRoom() const;
 
 private:
   struct Impl;
-  std::unique_ptr<Impl> pImpl;
+  std::unique_ptr<Impl> m_pImpl;
 };
 } // namespace ng

@@ -1,27 +1,24 @@
 #pragma once
-#include <SFML/Graphics.hpp>
 #include "SaveLoadDialog.hpp"
 
 namespace ng {
 
-class StartScreenDialog : public sf::Drawable {
+class StartScreenDialog final : public ngf::Drawable {
 public:
-  typedef std::function<void()> Callback;
+  using Callback = std::function<void()>;
 
+  void draw(ngf::RenderTarget &target, ngf::RenderStates states) const final;
 public:
   StartScreenDialog();
-  ~StartScreenDialog() override;
+  ~StartScreenDialog() final;
 
   void setNewGameCallback(Callback callback);
   void setSlotCallback(SaveLoadDialog::SlotCallback callback);
   void setEngine(Engine *pEngine);
-  void update(const sf::Time &elapsed);
-
-private:
-  void draw(sf::RenderTarget &target, sf::RenderStates states) const override;
+  void update(const ngf::TimeSpan &elapsed);
 
 private:
   struct Impl;
-  std::unique_ptr<Impl> _pImpl;
+  std::unique_ptr<Impl> m_pImpl;
 };
 }

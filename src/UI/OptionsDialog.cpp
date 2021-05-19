@@ -1,23 +1,27 @@
-#include "_Button.hpp"
-#include "_Checkbox.hpp"
-#include "_Slider.hpp"
-#include "_SwitchButton.hpp"
-#include "engge/Audio/SoundManager.hpp"
-#include "engge/Engine/Engine.hpp"
-#include "engge/Engine/Preferences.hpp"
-#include "engge/Graphics/Screen.hpp"
-#include "engge/Graphics/SpriteSheet.hpp"
-#include "engge/Graphics/Text.hpp"
-#include "engge/Scripting/ScriptEngine.hpp"
-#include "engge/System/Logger.hpp"
-#include "engge/UI/OptionsDialog.hpp"
-#include "engge/UI/SaveLoadDialog.hpp"
-#include "engge/UI/QuitDialog.hpp"
+#include "Button.hpp"
+#include "Checkbox.hpp"
+#include "Slider.hpp"
+#include "SwitchButton.hpp"
+#include <engge/EnggeApplication.hpp>
+#include <engge/Audio/SoundManager.hpp>
+#include <engge/Engine/Engine.hpp>
+#include <engge/Engine/Preferences.hpp>
+#include <engge/Graphics/Screen.hpp>
+#include <engge/Graphics/SpriteSheet.hpp>
+#include <engge/Scripting/ScriptEngine.hpp>
+#include <engge/System/Logger.hpp>
+#include <engge/UI/OptionsDialog.hpp>
+#include <engge/UI/SaveLoadDialog.hpp>
+#include <engge/UI/QuitDialog.hpp>
+#include "HelpDialog.hpp"
 #include <utility>
+#include <ngf/Graphics/FntFont.h>
+#include <ngf/Graphics/RectangleShape.h>
+#include <ngf/System/Mouse.h>
 
 namespace ng {
 struct OptionsDialog::Impl {
-  enum class State { Main, Sound, Video, Controls, TextAndSpeech, Help };
+  enum class State { None, Main, Sound, Video, Controls, TextAndSpeech, Help };
 
   struct Ids {
     inline static const int EnglishText = 98001;
@@ -64,31 +68,35 @@ struct OptionsDialog::Impl {
   static constexpr float yPosLarge = 58.f;
   static constexpr float yPosSmall = 54.f;
 
-  Engine *_pEngine{nullptr};
-  SpriteSheet _saveLoadSheet;
+  Engine *m_pEngine{nullptr};
+  SpriteSheet m_saveLoadSheet;
 
-  Text _headingText;
-  std::vector<_Button> _buttons;
-  std::vector<_SwitchButton> _switchButtons;
-  std::vector<_Checkbox> _checkboxes;
-  std::vector<_Slider> _sliders;
-  bool _showQuit{false};
-  bool _showSaveLoad{false};
-  QuitDialog _quit;
-  SaveLoadDialog _saveload;
-  Callback _callback{nullptr};
-  bool _isDirty{false};
-  State _state{State::Main};
-  bool _saveEnabled{false};
+  ng::Text m_headingText;
+  std::vector<Button> m_buttons;
+  std::vector<SwitchButton> m_switchButtons;
+  std::vector<Checkbox> m_checkboxes;
+  std::vector<Slider> m_sliders;
+  bool m_showQuit{false};
+  bool m_showSaveLoad{false};
+  bool m_showHelp{false};
+  QuitDialog m_quitDialog;
+  SaveLoadDialog m_saveLoadDialog;
+  HelpDialog m_help;
+  Callback m_callback{nullptr};
+  bool m_isDirty{false};
+  State m_state{State::None};
+  State m_nextState{State::None};
+  bool m_saveEnabled{false};
 
   inline static float getSlotPos(int slot) {
     return yPosStart + yPosLarge + yPosSmall * static_cast<float>(slot);
   }
 
   void setHeading(int id) {
-    _headingText.setString(Engine::getText(id));
-    auto textRect = _headingText.getGlobalBounds();
-    _headingText.setPosition(sf::Vector2f((Screen::Width - textRect.width) / 2.f, yPosStart - textRect.height / 2));
+    m_headingText.setWideString(Engine::getText(id));
+    auto textRect = m_headingText.getLocalBounds();
+    m_headingText.getTransform().setPosition({(Screen::Width - textRect.getWidth()) / 2.f,
+                                              yPosStart - textRect.getHeight() / 2});
   }
 
   template<typename T>
@@ -108,378 +116,410 @@ struct OptionsDialog::Impl {
     return static_cast<int>(std::distance(LanguageValues.begin(), it));
   }
 
-  void updateState(State state) {
-    _state = state;
-    if (_isDirty) {
+  void setState(State state) {
+    m_nextState = state;
+  }
+
+  void onStateChanged() {
+    if (m_isDirty) {
       Locator<Preferences>::get().save();
-      _quit.updateLanguage();
-      _isDirty = false;
+      m_quitDialog.updateLanguage();
+      m_isDirty = false;
     }
-    _sliders.clear();
-    _buttons.clear();
-    _switchButtons.clear();
-    _checkboxes.clear();
-    switch (state) {
+    m_sliders.clear();
+    m_buttons.clear();
+    m_switchButtons.clear();
+    m_checkboxes.clear();
+    switch (m_state) {
     case State::Main:setHeading(Ids::Options);
-      _buttons.emplace_back(Ids::SaveGame, getSlotPos(0), [this]() {
-        _saveload.updateLanguage();
-        _saveload.setSaveMode(true);
-        _showSaveLoad = true;
-      }, _saveEnabled);
-      _buttons.emplace_back(Ids::LoadGame, getSlotPos(1), [this]() {
-        _saveload.updateLanguage();
-        _saveload.setSaveMode(false);
-        _showSaveLoad = true;
+      m_buttons.emplace_back(Ids::SaveGame, getSlotPos(0), [this]() {
+        m_saveLoadDialog.updateLanguage();
+        m_saveLoadDialog.setSaveMode(true);
+        m_showSaveLoad = true;
+      }, m_saveEnabled);
+      m_buttons.emplace_back(Ids::LoadGame, getSlotPos(1), [this]() {
+        m_saveLoadDialog.updateLanguage();
+        m_saveLoadDialog.setSaveMode(false);
+        m_showSaveLoad = true;
       });
-      _buttons.emplace_back(Ids::Sound, getSlotPos(2), [this]() { updateState(State::Sound); });
-      _buttons.emplace_back(Ids::Video, getSlotPos(3), [this]() { updateState(State::Video); });
-      _buttons.emplace_back(Ids::Controls, getSlotPos(4), [this]() { updateState(State::Controls); });
-      _buttons.emplace_back(Ids::TextAndSpeech, getSlotPos(5), [this]() { updateState(State::TextAndSpeech); });
-      _buttons.emplace_back(Ids::Help, getSlotPos(6), [this]() { updateState(State::Help); });
-      _buttons.emplace_back(Ids::Quit, getSlotPos(7), [this]() { _showQuit = true; }, true);
-      _buttons.emplace_back(Ids::Back, getSlotPos(9), [this]() {
-        if (_callback)
-          _callback();
-      }, true, _Button::Size::Medium);
+      m_buttons.emplace_back(Ids::Sound, getSlotPos(2), [this]() { setState(State::Sound); });
+      m_buttons.emplace_back(Ids::Video, getSlotPos(3), [this]() { setState(State::Video); });
+      m_buttons.emplace_back(Ids::Controls, getSlotPos(4), [this]() { setState(State::Controls); });
+      m_buttons.emplace_back(Ids::TextAndSpeech, getSlotPos(5), [this]() { setState(State::TextAndSpeech); });
+      m_buttons.emplace_back(Ids::Help, getSlotPos(6), [this]() { setState(State::Help); });
+      m_buttons.emplace_back(Ids::Quit, getSlotPos(7), [this]() { m_showQuit = true; }, true);
+      m_buttons.emplace_back(Ids::Back, getSlotPos(9), [this]() {
+        if (m_callback)
+          m_callback();
+      }, true, Button::Size::Medium);
       break;
     case State::Sound:setHeading(Ids::Sound);
-      _sliders.emplace_back(Ids::SoundVolume,
-                            getSlotPos(2),
-                            true,
-                            Locator<SoundManager>::get().getSoundVolume(),
-                            [this](auto value) {
-                              _isDirty = true;
+      m_sliders.emplace_back(Ids::SoundVolume,
+                             getSlotPos(2),
+                             true,
+                             Locator<SoundManager>::get().getSoundVolume(),
+                             [this](auto value) {
+                               m_isDirty = true;
                               Locator<SoundManager>::get().setSoundVolume(value);
                             });
-      _sliders.emplace_back(Ids::MusicVolume,
-                            getSlotPos(3),
-                            true,
-                            Locator<SoundManager>::get().getMusicVolume(),
-                            [this](auto value) {
-                              _isDirty = true;
+      m_sliders.emplace_back(Ids::MusicVolume,
+                             getSlotPos(3),
+                             true,
+                             Locator<SoundManager>::get().getMusicVolume(),
+                             [this](auto value) {
+                               m_isDirty = true;
                               Locator<SoundManager>::get().setMusicVolume(value);
                             });
-      _sliders.emplace_back(Ids::VoiceVolume,
-                            getSlotPos(4),
-                            true,
-                            Locator<SoundManager>::get().getTalkVolume(),
-                            [this](auto value) {
-                              _isDirty = true;
+      m_sliders.emplace_back(Ids::VoiceVolume,
+                             getSlotPos(4),
+                             true,
+                             Locator<SoundManager>::get().getTalkVolume(),
+                             [this](auto value) {
+                               m_isDirty = true;
                               Locator<SoundManager>::get().setTalkVolume(value);
                             });
-      _buttons.emplace_back(Ids::Back,
-                            getSlotPos(9),
-                            [this]() { updateState(State::Main); },
-                            true,
-                            _Button::Size::Medium);
+      m_buttons.emplace_back(Ids::Back,
+                             getSlotPos(9),
+                             [this]() { setState(State::Main); },
+                             true,
+                             Button::Size::Medium);
       break;
     case State::Video:setHeading(Ids::Video);
-      _checkboxes.emplace_back(Ids::Fullscreen, getSlotPos(1), true,
-                               getUserPreference(PreferenceNames::Fullscreen, PreferenceDefaultValues::Fullscreen),
-                               [this](auto value) {
-                                 _isDirty = true;
+      m_checkboxes.emplace_back(Ids::Fullscreen, getSlotPos(1), true,
+                                getUserPreference(PreferenceNames::Fullscreen, PreferenceDefaultValues::Fullscreen),
+                                [this](auto value) {
+                                  m_isDirty = true;
                                  setUserPreference(PreferenceNames::Fullscreen, value);
                                });
-      _sliders.emplace_back(Ids::SafeArea, getSlotPos(2), false,
-                            getUserPreference(PreferenceNames::SafeArea, PreferenceDefaultValues::SafeArea),
-                            [this](auto value) {
-                              _isDirty = true;
+      m_sliders.emplace_back(Ids::SafeArea, getSlotPos(2), false,
+                             getUserPreference(PreferenceNames::SafeArea, PreferenceDefaultValues::SafeArea),
+                             [this](auto value) {
+                               m_isDirty = true;
                               setUserPreference(PreferenceNames::SafeArea, value);
                             });
-      _checkboxes.emplace_back(Ids::ToiletPaperOver, getSlotPos(4), true,
-                               getUserPreference(PreferenceNames::ToiletPaperOver,
+      m_checkboxes.emplace_back(Ids::ToiletPaperOver, getSlotPos(4), true,
+                                getUserPreference(PreferenceNames::ToiletPaperOver,
                                                  PreferenceDefaultValues::ToiletPaperOver),
-                               [this](auto value) {
-                                 _isDirty = true;
+                                [this](auto value) {
+                                  m_isDirty = true;
                                  setUserPreference(PreferenceNames::ToiletPaperOver, value);
                                  ScriptEngine::call("setSettingVar", "toilet_paper_over", value ? 1 : 0);
                                });
-      _checkboxes.emplace_back(Ids::AnnoyingInJokes, getSlotPos(5), true,
-                               getUserPreference(PreferenceNames::AnnoyingInJokes,
+      m_checkboxes.emplace_back(Ids::AnnoyingInJokes, getSlotPos(5), true,
+                                getUserPreference(PreferenceNames::AnnoyingInJokes,
                                                  PreferenceDefaultValues::AnnoyingInJokes),
-                               [this](auto value) {
-                                 _isDirty = true;
+                                [this](auto value) {
+                                  m_isDirty = true;
                                  setUserPreference(PreferenceNames::AnnoyingInJokes, value);
                                  ScriptEngine::call("setSettingVar", "annoying_injokes", value ? 1 : 0);
                                });
-      _buttons.emplace_back(Ids::Back,
-                            getSlotPos(9),
-                            [this]() { updateState(State::Main); },
-                            true,
-                            _Button::Size::Medium);
+      m_buttons.emplace_back(Ids::Back,
+                             getSlotPos(9),
+                             [this]() { setState(State::Main); },
+                             true,
+                             Button::Size::Medium);
       break;
     case State::Controls:setHeading(Ids::Controls);
-      _checkboxes.emplace_back(Ids::Controller, getSlotPos(1), false,
-                               getUserPreference(PreferenceNames::Controller, PreferenceDefaultValues::Controller),
-                               [this](auto value) {
-                                 _isDirty = true;
+      m_checkboxes.emplace_back(Ids::Controller, getSlotPos(1), false,
+                                getUserPreference(PreferenceNames::Controller, PreferenceDefaultValues::Controller),
+                                [this](auto value) {
+                                  m_isDirty = true;
                                  setUserPreference(PreferenceNames::Controller, value);
                                });
-      _checkboxes.emplace_back(Ids::ScrollSyncCursor, getSlotPos(2), false,
-                               getUserPreference(PreferenceNames::ScrollSyncCursor,
+      m_checkboxes.emplace_back(Ids::ScrollSyncCursor, getSlotPos(2), false,
+                                getUserPreference(PreferenceNames::ScrollSyncCursor,
                                                  PreferenceDefaultValues::ScrollSyncCursor),
-                               [this](auto value) {
-                                 _isDirty = true;
+                                [this](auto value) {
+                                  m_isDirty = true;
                                  setUserPreference(PreferenceNames::ScrollSyncCursor, value);
                                });
-      _checkboxes.emplace_back(Ids::InvertVerbColors, getSlotPos(4), true,
-                               getUserPreference(PreferenceNames::InvertVerbHighlight,
+      m_checkboxes.emplace_back(Ids::InvertVerbColors, getSlotPos(4), true,
+                                getUserPreference(PreferenceNames::InvertVerbHighlight,
                                                  PreferenceDefaultValues::InvertVerbHighlight),
-                               [this](auto value) {
-                                 _isDirty = true;
+                                [this](auto value) {
+                                  m_isDirty = true;
                                  setUserPreference(PreferenceNames::InvertVerbHighlight, value);
                                });
-      _checkboxes.emplace_back(Ids::RetroFonts, getSlotPos(5), true,
-                               getUserPreference(PreferenceNames::RetroFonts, PreferenceDefaultValues::RetroFonts),
-                               [this](auto value) {
-                                 _isDirty = true;
+      m_checkboxes.emplace_back(Ids::RetroFonts, getSlotPos(5), true,
+                                getUserPreference(PreferenceNames::RetroFonts, PreferenceDefaultValues::RetroFonts),
+                                [this](auto value) {
+                                  m_isDirty = true;
                                  setUserPreference(PreferenceNames::RetroFonts, value);
                                });
-      _checkboxes.emplace_back(Ids::RetroVerbs, getSlotPos(6), true,
-                               getUserPreference(PreferenceNames::RetroVerbs, PreferenceDefaultValues::RetroVerbs),
-                               [this](auto value) {
-                                 _isDirty = true;
+      m_checkboxes.emplace_back(Ids::RetroVerbs, getSlotPos(6), true,
+                                getUserPreference(PreferenceNames::RetroVerbs, PreferenceDefaultValues::RetroVerbs),
+                                [this](auto value) {
+                                  m_isDirty = true;
                                  setUserPreference(PreferenceNames::RetroVerbs, value);
                                  if (value) {
-                                   _checkboxes[3].setChecked(true);
-                                   _checkboxes[5].setChecked(true);
+                                   m_checkboxes[3].setChecked(true);
+                                   m_checkboxes[5].setChecked(true);
                                  }
                                });
-      _checkboxes.emplace_back(Ids::ClassicSentence, getSlotPos(7), true,
-                               getUserPreference(PreferenceNames::ClassicSentence,
+      m_checkboxes.emplace_back(Ids::ClassicSentence, getSlotPos(7), true,
+                                getUserPreference(PreferenceNames::ClassicSentence,
                                                  PreferenceDefaultValues::ClassicSentence),
-                               [this](auto value) {
-                                 _isDirty = true;
+                                [this](auto value) {
+                                  m_isDirty = true;
                                  setUserPreference(PreferenceNames::ClassicSentence, value);
                                });
-      _buttons.emplace_back(Ids::Back,
-                            getSlotPos(9),
-                            [this]() { updateState(State::Main); },
-                            true,
-                            _Button::Size::Medium);
+      m_buttons.emplace_back(Ids::Back,
+                             getSlotPos(9),
+                             [this]() { setState(State::Main); },
+                             true,
+                             Button::Size::Medium);
       break;
     case State::TextAndSpeech:setHeading(Ids::TextAndSpeech);
-      _sliders.emplace_back(Ids::TextSpeed, getSlotPos(1), true,
-                            getUserPreference(PreferenceNames::SayLineSpeed, PreferenceDefaultValues::SayLineSpeed),
-                            [this](auto value) {
-                              _isDirty = true;
+      m_sliders.emplace_back(Ids::TextSpeed, getSlotPos(1), true,
+                             getUserPreference(PreferenceNames::SayLineSpeed, PreferenceDefaultValues::SayLineSpeed),
+                             [this](auto value) {
+                               m_isDirty = true;
                               setUserPreference(PreferenceNames::SayLineSpeed, value);
                             });
-      _checkboxes.emplace_back(Ids::DisplayText, getSlotPos(3), true,
-                               getUserPreference(PreferenceNames::DisplayText, PreferenceDefaultValues::DisplayText),
-                               [this](auto value) {
-                                 _isDirty = true;
+      m_checkboxes.emplace_back(Ids::DisplayText, getSlotPos(3), true,
+                                getUserPreference(PreferenceNames::DisplayText, PreferenceDefaultValues::DisplayText),
+                                [this](auto value) {
+                                  m_isDirty = true;
                                  if (!value && !getUserPreference(PreferenceNames::HearVoice,
                                                                   PreferenceDefaultValues::HearVoice)) {
-                                   _checkboxes[1].setChecked(true);
+                                   m_checkboxes[1].setChecked(true);
                                    setUserPreference(PreferenceNames::HearVoice, true);
                                  }
                                  setUserPreference(PreferenceNames::DisplayText, value);
                                });
-      _checkboxes.emplace_back(Ids::HearVoice, getSlotPos(4), true,
-                               getUserPreference(PreferenceNames::HearVoice, PreferenceDefaultValues::HearVoice),
-                               [this](auto value) {
-                                 _isDirty = true;
+      m_checkboxes.emplace_back(Ids::HearVoice, getSlotPos(4), true,
+                                getUserPreference(PreferenceNames::HearVoice, PreferenceDefaultValues::HearVoice),
+                                [this](auto value) {
+                                  m_isDirty = true;
                                  if (!value && !getUserPreference(PreferenceNames::DisplayText,
                                                                   PreferenceDefaultValues::DisplayText)) {
-                                   _checkboxes[0].setChecked(true);
+                                   m_checkboxes[0].setChecked(true);
                                    setUserPreference(PreferenceNames::DisplayText, true);
                                  }
                                  setUserPreference(PreferenceNames::HearVoice, value);
                                });
-      _switchButtons.push_back(_SwitchButton({Ids::EnglishText, Ids::FrenchText, Ids::ItalianText, Ids::GermanText,
+      m_switchButtons.push_back(SwitchButton({Ids::EnglishText, Ids::FrenchText, Ids::ItalianText, Ids::GermanText,
                                               Ids::SpanishText}, getSlotPos(5), true,
                                              getLanguageUserPreference(), [this](auto index) {
-            _isDirty = true;
+            m_isDirty = true;
             setUserPreference(PreferenceNames::Language, LanguageValues[index]);
           }));
-      _buttons.emplace_back(Ids::Back,
-                            getSlotPos(9),
-                            [this]() { updateState(State::Main); },
-                            true,
-                            _Button::Size::Medium);
+      m_buttons.emplace_back(Ids::Back,
+                             getSlotPos(9),
+                             [this]() { setState(State::Main); },
+                             true,
+                             Button::Size::Medium);
       break;
     case State::Help:setHeading(Ids::Help);
-      _buttons.emplace_back(Ids::Introduction, getSlotPos(1), [this]() {
-        _pEngine->execute("HelpScreens.helpIntro()");
+      m_buttons.emplace_back(Ids::Introduction, getSlotPos(1), [this]() {
+        m_help.init(m_pEngine, [this]() { m_showHelp = false; }, {1, 2, 3, 4, 5, 6});
+        m_showHelp = true;
       }, true);
-      _buttons.emplace_back(Ids::MouseTips, getSlotPos(2), []() {}, false);
-      _buttons.emplace_back(Ids::ControllerTips, getSlotPos(3), []() {}, false);
-      _buttons.emplace_back(Ids::ControllerMap, getSlotPos(4), []() {}, false);
-      _buttons.emplace_back(Ids::KeyboardMap, getSlotPos(5), []() {}, false);
-      _buttons.emplace_back(Ids::Back,
-                            getSlotPos(9),
-                            [this]() { updateState(State::Main); },
-                            true,
-                            _Button::Size::Medium);
+      m_buttons.emplace_back(Ids::MouseTips, getSlotPos(2), [this]() {
+        m_help.init(m_pEngine, [this]() { m_showHelp = false; }, {7, 8, 9});
+        m_showHelp = true;
+      }, true);
+      m_buttons.emplace_back(Ids::ControllerTips, getSlotPos(3), [this]() {
+        m_help.init(m_pEngine, [this]() { m_showHelp = false; }, {10, 11, 12, 13, 14});
+        m_showHelp = true;
+      }, true);
+      m_buttons.emplace_back(Ids::ControllerMap, getSlotPos(4), [this]() {
+        m_help.init(m_pEngine, [this]() { m_showHelp = false; }, {15});
+        m_showHelp = true;
+      }, true);
+      m_buttons.emplace_back(Ids::KeyboardMap, getSlotPos(5), [this]() {
+        m_help.init(m_pEngine, [this]() { m_showHelp = false; }, {16});
+        m_showHelp = true;
+      }, true);
+      m_buttons.emplace_back(Ids::Back,
+                             getSlotPos(9),
+                             [this]() { setState(State::Main); },
+                             true,
+                             Button::Size::Medium);
       break;
-    default:updateState(State::Main);
+    default:setState(State::Main);
       break;
     }
 
-    for (auto &button : _buttons) {
-      button.setEngine(_pEngine);
+    for (auto &button : m_buttons) {
+      button.setEngine(m_pEngine);
     }
-    for (auto &switchButton : _switchButtons) {
-      switchButton.setEngine(_pEngine);
+    for (auto &switchButton : m_switchButtons) {
+      switchButton.setEngine(m_pEngine);
     }
-    for (auto &checkbox : _checkboxes) {
-      checkbox.setEngine(_pEngine);
-      checkbox.setSpriteSheet(&_saveLoadSheet);
+    for (auto &checkbox : m_checkboxes) {
+      checkbox.setEngine(m_pEngine);
+      checkbox.setSpriteSheet(&m_saveLoadSheet);
     }
-    for (auto &slider : _sliders) {
-      slider.setEngine(_pEngine);
-      slider.setSpriteSheet(&_saveLoadSheet);
+    for (auto &slider : m_sliders) {
+      slider.setEngine(m_pEngine);
+      slider.setSpriteSheet(&m_saveLoadSheet);
     }
   }
 
   void setEngine(Engine *pEngine) {
-    _pEngine = pEngine;
+    m_pEngine = pEngine;
     if (!pEngine)
       return;
 
-    auto &tm = pEngine->getTextureManager();
-    _saveLoadSheet.setTextureManager(&tm);
-    _saveLoadSheet.load("SaveLoadSheet");
+    auto &tm = pEngine->getResourceManager();
+    m_saveLoadSheet.setTextureManager(&tm);
+    m_saveLoadSheet.load("SaveLoadSheet");
 
-    const auto &headingFont = _pEngine->getTextureManager().getFntFont("HeadingFont.fnt");
-    _headingText.setFont(headingFont);
-    _headingText.setFillColor(sf::Color::White);
+    const auto &headingFont = m_pEngine->getResourceManager().getFntFont("HeadingFont.fnt");
+    m_headingText.setFont(headingFont);
+    m_headingText.setColor(ngf::Colors::White);
 
-    _quit.setEngine(pEngine);
-    _quit.setCallback([this](bool result) {
+    m_quitDialog.setEngine(pEngine);
+    m_quitDialog.setCallback([this](bool result) {
       if (result)
-        _pEngine->quit();
-      _showQuit = result;
+        m_pEngine->quit();
+      m_showQuit = result;
     });
 
-    _saveload.setEngine(pEngine);
-    _saveload.setCallback([this]() {
-      _showSaveLoad = false;
+    m_saveLoadDialog.setEngine(pEngine);
+    m_saveLoadDialog.setCallback([this]() {
+      m_showSaveLoad = false;
     });
-    _saveload.setSlotCallback([this](int slot) {
-      if (_saveload.getSaveMode()) {
-        _pEngine->saveGame(slot);
-        _showSaveLoad = false;
-        if (_callback)
-          _callback();
+    m_saveLoadDialog.setSlotCallback([this](int slot) {
+      if (m_saveLoadDialog.getSaveMode()) {
+        m_pEngine->saveGame(slot);
+        m_showSaveLoad = false;
+        if (m_callback)
+          m_callback();
       } else {
-        _pEngine->loadGame(slot);
-        _showSaveLoad = false;
-        if (_callback)
-          _callback();
+        m_pEngine->loadGame(slot);
+        m_showSaveLoad = false;
+        if (m_callback)
+          m_callback();
       }
     });
 
-    updateState(State::Main);
+    setState(State::Main);
   }
 
-  void draw(sf::RenderTarget &target, sf::RenderStates states) {
-    const auto view = target.getView();
-    auto viewRect = sf::FloatRect(0, 0, 320, 180);
-    target.setView(sf::View(viewRect));
+  void draw(ngf::RenderTarget &target, ngf::RenderStates states) {
+    if (m_showHelp) {
+      m_help.draw(target, states);
+      return;
+    }
 
-    sf::Color backColor{0, 0, 0, 128};
-    sf::RectangleShape fadeShape;
-    fadeShape.setSize(sf::Vector2f(viewRect.width, viewRect.height));
-    fadeShape.setFillColor(backColor);
-    target.draw(fadeShape);
+    const auto view = target.getView();
+    auto viewRect = ngf::frect::fromPositionSize({0, 0}, {320, 180});
+    target.setView(ngf::View(viewRect));
+
+    ngf::Color backColor{0, 0, 0, 128};
+    ngf::RectangleShape fadeShape;
+    fadeShape.setSize(viewRect.getSize());
+    fadeShape.setColor(backColor);
+    fadeShape.draw(target, {});
 
     // draw background
-    auto viewCenter = sf::Vector2f(viewRect.width / 2, viewRect.height / 2);
-    auto rect = _saveLoadSheet.getRect("options_background");
-    sf::Sprite sprite;
-    sprite.setPosition(viewCenter);
-    sprite.setTexture(_saveLoadSheet.getTexture());
-    sprite.setOrigin(static_cast<float>(rect.width / 2.f), static_cast<float>(rect.height / 2.f));
+    auto viewCenter = glm::vec2(viewRect.getWidth() / 2, viewRect.getHeight() / 2);
+    auto rect = m_saveLoadSheet.getRect("options_background");
+    ngf::Sprite sprite;
+    sprite.getTransform().setPosition(viewCenter);
+    sprite.setTexture(*m_saveLoadSheet.getTexture());
+    sprite.getTransform().setOrigin({static_cast<float>(rect.getWidth() / 2.f),
+                                     static_cast<float>(rect.getHeight() / 2.f)});
     sprite.setTextureRect(rect);
-    target.draw(sprite);
+    sprite.draw(target, {});
 
-    viewRect = sf::FloatRect(0, 0, Screen::Width, Screen::Height);
-    target.setView(sf::View(viewRect));
+    viewRect = ngf::frect::fromPositionSize({0, 0}, {Screen::Width, Screen::Height});
+    target.setView(ngf::View(viewRect));
 
     // heading
-    target.draw(_headingText);
+    m_headingText.draw(target, {});
 
     // controls
-    for (auto &button : _buttons) {
-      target.draw(button);
+    for (auto &button : m_buttons) {
+      button.draw(target, {});
     }
-    for (auto &switchButton : _switchButtons) {
-      target.draw(switchButton);
+    for (auto &switchButton : m_switchButtons) {
+      switchButton.draw(target, {});
     }
-    for (auto &checkbox : _checkboxes) {
-      target.draw(checkbox);
+    for (auto &checkbox : m_checkboxes) {
+      checkbox.draw(target, {});
     }
-    for (auto &slider : _sliders) {
-      target.draw(slider);
+    for (auto &slider : m_sliders) {
+      slider.draw(target, {});
     }
 
     target.setView(view);
 
-    if (_showSaveLoad) {
-      target.draw(_saveload, states);
+    if (m_showSaveLoad) {
+      m_saveLoadDialog.draw(target, states);
     }
 
-    if (_showQuit) {
-      target.draw(_quit, states);
+    if (m_showQuit) {
+      m_quitDialog.draw(target, states);
     }
   }
 
-  void update(const sf::Time &elapsed) {
-    if (_showSaveLoad) {
-      _saveload.update(elapsed);
+  void update(const ngf::TimeSpan &elapsed) {
+    if (m_state != m_nextState) {
+      m_state = m_nextState;
+      onStateChanged();
+    }
+
+    if (m_showHelp) {
+      m_help.update(elapsed);
       return;
     }
 
-    if (_showQuit) {
-      _quit.update(elapsed);
+    if (m_showSaveLoad) {
+      m_saveLoadDialog.update(elapsed);
       return;
     }
 
-    auto pos = (sf::Vector2f) _pEngine->getWindow().mapPixelToCoords(sf::Mouse::getPosition(_pEngine->getWindow()),
-                                                                     sf::View(sf::FloatRect(0,
-                                                                                            0,
-                                                                                            Screen::Width,
-                                                                                            Screen::Height)));
-    for (auto &button : _buttons) {
-      button.update(pos);
+    if (m_showQuit) {
+      m_quitDialog.update(elapsed);
+      return;
     }
-    for (auto &switchButton : _switchButtons) {
-      switchButton.update(pos);
+
+    auto pos = m_pEngine->getApplication()->getRenderTarget()->mapPixelToCoords(ngf::Mouse::getPosition(),
+                                                                                ngf::View(ngf::frect::fromPositionSize({0,
+                                                                                                                       0},
+                                                                                                                      {Screen::Width,
+                                                                                                                       Screen::Height})));
+    for (auto &button : m_buttons) {
+      button.update(elapsed, pos);
     }
-    for (auto &checkbox : _checkboxes) {
-      checkbox.update(pos);
+    for (auto &switchButton : m_switchButtons) {
+      switchButton.update(elapsed, pos);
     }
-    for (auto &slider : _sliders) {
-      slider.update(pos);
+    for (auto &checkbox : m_checkboxes) {
+      checkbox.update(elapsed, pos);
+    }
+    for (auto &slider : m_sliders) {
+      slider.update(elapsed, pos);
     }
   }
 };
 
 OptionsDialog::OptionsDialog()
-    : _pImpl(std::make_unique<Impl>()) {
+    : m_pImpl(std::make_unique<Impl>()) {
 }
 
 OptionsDialog::~OptionsDialog() = default;
 
-void OptionsDialog::setSaveEnabled(bool enabled) { _pImpl->_saveEnabled = enabled; }
+void OptionsDialog::setSaveEnabled(bool enabled) { m_pImpl->m_saveEnabled = enabled; }
 
-void OptionsDialog::setEngine(Engine *pEngine) { _pImpl->setEngine(pEngine); }
+void OptionsDialog::setEngine(Engine *pEngine) { m_pImpl->setEngine(pEngine); }
 
-void OptionsDialog::draw(sf::RenderTarget &target, sf::RenderStates states) const {
-  _pImpl->draw(target, states);
+void OptionsDialog::draw(ngf::RenderTarget &target, ngf::RenderStates states) const {
+  m_pImpl->draw(target, states);
 }
 
-void OptionsDialog::update(const sf::Time &elapsed) {
-  _pImpl->update(elapsed);
+void OptionsDialog::update(const ngf::TimeSpan &elapsed) {
+  m_pImpl->update(elapsed);
 }
 
 void OptionsDialog::showHelp() {
-  _pImpl->updateState(Impl::State::Help);
+  m_pImpl->setState(Impl::State::Help);
 }
 
 void OptionsDialog::setCallback(Callback callback) {
-  _pImpl->_callback = std::move(callback);
+  m_pImpl->m_callback = std::move(callback);
 }
 }

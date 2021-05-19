@@ -2,21 +2,20 @@
 #include "engge/Engine/EngineSettings.hpp"
 #include "engge/Parsers/Lip.hpp"
 #include "engge/System/Locator.hpp"
-#include "../System/_Util.hpp"
+#include "../Util/Util.hpp"
 
 namespace ng {
 Lip::Lip() = default;
 
 void Lip::clear() {
-  _data.clear();
+  m_data.clear();
 }
 
 void Lip::load(const std::string &path) {
-  std::vector<char> buffer;
-  Locator<EngineSettings>::get().readEntry(path, buffer);
+  auto buffer = Locator<EngineSettings>::get().readBuffer(path);
   GGPackBufferStream input(buffer);
-  _data.clear();
-  _path = path;
+  m_data.clear();
+  m_path = path;
   std::regex re(R"(^(\d*\.?\d*)\s+(\w)$)");
 
   std::string line;
@@ -27,8 +26,8 @@ void Lip::load(const std::string &path) {
 
     auto t = std::strtof(matches[1].str().c_str(), nullptr);
     auto text = matches[2].str();
-    NGLipData data{sf::seconds(t), text[0]};
-    _data.emplace_back(data);
+    NGLipData data{ngf::TimeSpan::seconds(t), text[0]};
+    m_data.emplace_back(data);
   }
 }
 } // namespace ng

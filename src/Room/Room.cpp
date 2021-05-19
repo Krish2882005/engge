@@ -1,28 +1,28 @@
-#include "engge/Room/Room.hpp"
-#include "engge/Entities/Objects/Animation.hpp"
-#include "engge/Engine/EngineSettings.hpp"
-#include "engge/Math/PathFinding/Graph.hpp"
-#include "engge/Parsers/JsonTokenReader.hpp"
-#include "engge/Engine/Light.hpp"
-#include "engge/System/Locator.hpp"
-#include "engge/System/Logger.hpp"
-#include "engge/Math/PathFinding/PathFinder.hpp"
-#include "engge/Engine/EntityManager.hpp"
-#include "engge/Room/RoomLayer.hpp"
-#include "engge/Room/RoomScaling.hpp"
-#include "engge/Graphics/SpriteSheet.hpp"
-#include "engge/Entities/Objects/AnimationFrame.hpp"
-#include "engge/Entities/Objects/TextObject.hpp"
-#include "engge/Scripting/ScriptEngine.hpp"
-#include "../System/_Util.hpp"
+#include <engge/Room/Room.hpp>
+#include <engge/Engine/EngineSettings.hpp>
+#include <engge/Engine/Light.hpp>
+#include <engge/System/Locator.hpp>
+#include <engge/System/Logger.hpp>
+#include <engge/Engine/EntityManager.hpp>
+#include <engge/Room/RoomLayer.hpp>
+#include <engge/Room/RoomScaling.hpp>
+#include <engge/Graphics/SpriteSheet.hpp>
+#include <engge/Entities/TextObject.hpp>
+#include <engge/Scripting/ScriptEngine.hpp>
+#include <engge/Entities/AnimationLoader.hpp>
+#include "Util/Util.hpp"
 #include <squirrel.h>
-#include <clipper.hpp>
 #include <algorithm>
 #include <iostream>
 #include <cmath>
 #include <memory>
+#include <ngf/Math/PathFinding/PathFinder.h>
+#include <ngf/Math/PathFinding/Walkbox.h>
+#include <ngf/Graphics/RectangleShape.h>
+#include <ngf/Graphics/FntFont.h>
 
 namespace ng {
+
 struct CmpLayer {
   bool operator()(int a, int b) const { return a > b; }
 };
@@ -30,26 +30,28 @@ struct CmpLayer {
 struct Room::Impl {
   ResourceManager &_textureManager;
   std::vector<std::unique_ptr<Object>> _objects;
-  std::vector<Walkbox> _walkboxes;
-  std::vector<Walkbox> _graphWalkboxes;
+  std::vector<Object *> _objectsToDelete;
+  std::vector<ngf::Walkbox> _walkboxes;
+  std::vector<ngf::Walkbox> _graphWalkboxes;
   std::map<int, std::unique_ptr<RoomLayer>, CmpLayer> _layers;
   std::vector<RoomScaling> _scalings;
   RoomScaling _scaling;
-  sf::Vector2i _roomSize;
+  glm::ivec2 _roomSize{0, 0};
   int32_t _screenHeight{0};
   std::string _sheet;
   std::string _name;
   int _fullscreen{0};
   HSQOBJECT _roomTable{};
-  std::shared_ptr<PathFinder> _pf;
-  sf::Color _ambientColor{255, 255, 255, 255};
+  std::shared_ptr<ngf::PathFinder> _pf;
+  ngf::Color _ambientColor{255, 255, 255, 255};
   SpriteSheet _spriteSheet;
   Room *_pRoom{nullptr};
-  std::vector<std::unique_ptr<Light>> _lights;
+  std::array<Light, LightingShader::MaxLights> _lights;
+  int _numLights{0};
   float _rotation{0};
-  sf::Shader _shader{};
+  LightingShader _lightingShader;
   int _selectedEffect{RoomEffectConstants::EFFECT_NONE};
-  sf::Color _overlayColor{sf::Color::Transparent};
+  ngf::Color _overlayColor{ngf::Colors::Transparent};
   bool _pseudoRoom{false};
 
   explicit Impl(HSQOBJECT roomTable)
@@ -59,68 +61,41 @@ struct Room::Impl {
     for (int i = -3; i < 6; ++i) {
       _layers[i] = std::make_unique<RoomLayer>();
     }
-
-    const std::string vertexShader = "void main()"
-                                     "{"
-                                     "    gl_Position = gl_ModelViewProjectionMatrix * gl_Vertex;"
-                                     "    gl_TexCoord[0] = gl_TextureMatrix[0] * gl_MultiTexCoord0;"
-                                     "    gl_FrontColor = gl_Color;"
-                                     "}";
-
-    // load vertex shader
-    if (!_shader.loadFromMemory(vertexShader, sf::Shader::Type::Vertex)) {
-      std::cerr << "Error loading shaders" << std::endl;
-      return;
-    }
   }
 
   void setEffect(int effect) {
-    if (effect == RoomEffectConstants::EFFECT_BLACKANDWHITE) {
-      _selectedEffect = effect;
-      const std::string fragmentShader = "uniform sampler2D texture;\n"
-                                         "void main()\n"
-                                         "{\n"
-                                         "vec4 texColor = texture2D(texture, gl_TexCoord[0].xy);\n"
-                                         "vec4 col = gl_Color * texColor;\n"
-                                         "float gray = dot(col.xyz, vec3(0.299, 0.587, 0.114));\n"
-                                         "gl_FragColor = vec4(gray, gray, gray, col.a);\n"
-                                         "}";
-      if (!_shader.loadFromMemory(fragmentShader, sf::Shader::Type::Fragment)) {
-        std::cerr << "Error loading shaders" << std::endl;
-      }
-      _shader.setUniform("texture", sf::Shader::CurrentTexture);
-      return;
-    }
-    _selectedEffect = RoomEffectConstants::EFFECT_NONE;
+    _selectedEffect = effect;
   }
 
   void setRoom(Room *pRoom) { _pRoom = pRoom; }
 
-  void loadBackgrounds(GGPackValue &jWimpy) {
+  void loadBackgrounds(ngf::GGPackValue &jWimpy) {
     int width = 0;
     if (!jWimpy["fullscreen"].isNull()) {
-      _fullscreen = jWimpy["fullscreen"].int_value;
+      _fullscreen = jWimpy["fullscreen"].getInt();
     }
+    _layers[0]->setTexture(_spriteSheet.getTextureName());
     auto screenHeight = _pRoom->getScreenSize().y;
+    auto offsetY = screenHeight - _pRoom->getRoomSize().y;
     if (jWimpy["background"].isArray()) {
-      for (auto &bg : jWimpy["background"].array_value) {
-        auto frame = _spriteSheet.getRect(bg.string_value);
-        auto sourceSize = _spriteSheet.getSourceSize(bg.string_value);
-        auto sourceRect = _spriteSheet.getSpriteSourceSize(bg.string_value);
-        auto offset = sourceSize.y - screenHeight;
-        _layers[0]->getBackgrounds().emplace_back(Background({sourceRect.left + width, sourceRect.top - offset},
-                                                             _sheet,
-                                                             frame));
-        width += sourceRect.width;
+      for (auto &bg : jWimpy["background"]) {
+        auto frame = _spriteSheet.getRect(bg.getString());
+        auto sourceSize = _spriteSheet.getSourceSize(bg.getString());
+        auto spriteSourceSize = _spriteSheet.getSpriteSourceSize(bg.getString());
+        _layers[0]->setRoomSizeY(_pRoom->getRoomSize().y);
+        _layers[0]->setOffsetY(offsetY);
+        _layers[0]->getBackgrounds().emplace_back(SpriteSheetItem{"background", frame, spriteSourceSize, sourceSize,
+                                                                  false});
+        width += frame.getWidth();
       }
     } else if (jWimpy["background"].isString()) {
-      auto frame = _spriteSheet.getRect(jWimpy["background"].string_value);
-      auto sourceSize = _spriteSheet.getSourceSize(jWimpy["background"].string_value);
-      auto sourceRect = _spriteSheet.getSpriteSourceSize(jWimpy["background"].string_value);
-      auto offset = sourceSize.y - screenHeight;
-      _layers[0]->getBackgrounds().emplace_back(Background({sourceRect.left, sourceRect.top - offset},
-                                                           _sheet,
-                                                           frame));
+      auto frame = _spriteSheet.getRect(jWimpy["background"].getString());
+      auto sourceSize = _spriteSheet.getSourceSize(jWimpy["background"].getString());
+      auto spriteSourceSize = _spriteSheet.getSpriteSourceSize(jWimpy["background"].getString());
+      _layers[0]->setRoomSizeY(_pRoom->getRoomSize().y);
+      _layers[0]->setOffsetY(offsetY);
+      _layers[0]->getBackgrounds().emplace_back(SpriteSheetItem{"background", frame, spriteSourceSize, sourceSize,
+                                                                false});
     }
     // room width seems to be not enough :S
     if (width > _roomSize.x) {
@@ -128,50 +103,39 @@ struct Room::Impl {
     }
   }
 
-  void loadLayers(GGPackValue &jWimpy) {
+  void loadLayers(const ngf::GGPackValue &jWimpy) {
     if (jWimpy["layers"].isNull())
       return;
 
     auto offsetY = _pRoom->getScreenSize().y - _pRoom->getRoomSize().y;
 
-    for (auto jLayer : jWimpy["layers"].array_value) {
-      auto zsort = jLayer["zsort"].int_value;
+    for (auto jLayer : jWimpy["layers"]) {
+      auto zsort = jLayer["zsort"].getInt();
       auto &layer = _layers[zsort];
+      layer->setRoomSizeY(_pRoom->getRoomSize().y);
+      layer->setOffsetY(offsetY);
+      layer->setTexture(_spriteSheet.getTextureName());
       layer->setZOrder(zsort);
       if (jLayer["name"].isArray()) {
-        auto offsetX = 0;
-        for (const auto &jName : jLayer["name"].array_value) {
-          auto layerName = jName.string_value;
-          auto rect = _spriteSheet.getRect(layerName);
-          auto spriteSourceSize = _spriteSheet.getSpriteSourceSize(layerName);
-          auto sourceSize = _spriteSheet.getSourceSize(layerName);
-          sf::Vector2i origin(-spriteSourceSize.left, sourceSize.y - _roomSize.y - spriteSourceSize.top);
-          offsetX += rect.width;
-          layer->getBackgrounds().push_back(Background({offsetX - origin.x, offsetY - origin.y}, _sheet, rect));
+        for (const auto &jName : jLayer["name"]) {
+          layer->getBackgrounds().push_back(_spriteSheet.getItem(jName.getString()));
         }
       } else {
-        auto layerName = jLayer["name"].string_value;
-        auto rect = _spriteSheet.getRect(layerName);
-        auto spriteSourceSize = _spriteSheet.getSpriteSourceSize(layerName);
-        auto sourceSize = _spriteSheet.getSourceSize(layerName);
-        sf::Vector2i origin(-spriteSourceSize.left, sourceSize.y - _roomSize.y - spriteSourceSize.top);
-        layer->getBackgrounds().push_back(Background({0 - origin.x, offsetY - origin.y}, _sheet, rect));
+        layer->getBackgrounds().push_back(_spriteSheet.getItem(jLayer["name"].getString()));
       }
       if (jLayer["parallax"].isString()) {
-        auto parallax = _parsePos(jLayer["parallax"].string_value);
-        layer->setParallax(parallax);
+        layer->setParallax(parsePos(jLayer["parallax"].getString()));
       } else {
-        auto parallax = jLayer["parallax"].double_value;
-        layer->setParallax(sf::Vector2f(parallax, 1));
+        layer->setParallax({jLayer["parallax"].getDouble(), 1});
       }
     }
   }
 
-  void loadObjects(const GGPackValue &jWimpy) {
-    for (auto jObject : jWimpy["objects"].array_value) {
+  void loadObjects(const ngf::GGPackValue &jWimpy) {
+    for (auto jObject : jWimpy["objects"]) {
       std::unique_ptr<Object> object;
 
-      auto objectName = jObject["name"].string_value;
+      auto objectName = jObject["name"].getString();
       auto v = ScriptEngine::getVm();
       sq_pushobject(v, _pRoom->getTable());
       sq_pushstring(v, objectName.c_str(), -1);
@@ -214,7 +178,7 @@ struct Room::Impl {
       object->setKey(objectName);
       // parent
       if (jObject["parent"].isString()) {
-        auto parent = jObject["parent"].string_value;
+        auto parent = jObject["parent"].getString();
         auto it = std::find_if(_objects.begin(), _objects.end(), [&parent](const std::unique_ptr<Object> &o) {
           return o->getName() == parent;
         });
@@ -223,25 +187,25 @@ struct Room::Impl {
         }
       }
       // zsort
-      object->setZOrder(jObject["zsort"].int_value);
+      object->setZOrder(jObject["zsort"].getInt());
       // position
-      auto pos = _parsePos(jObject["pos"].string_value);
-      auto usePos = _parsePos(jObject["usepos"].string_value);
-      auto useDir = _toDirection(jObject["usedir"].string_value);
+      auto pos = parsePos(jObject["pos"].getString());
+      auto usePos = parsePos(jObject["usepos"].getString());
+      auto useDir = toDirection(jObject["usedir"].getString());
       object->setUseDirection(useDir);
       // hotspot
-      auto hotspot = _parseRect(jObject["hotspot"].string_value);
-      object->setHotspot(sf::IntRect(hotspot.left, hotspot.top, hotspot.width, hotspot.height));
+      auto hotspot = parseRect(jObject["hotspot"].getString());
+      object->setHotspot(ngf::irect::fromPositionSize(hotspot.getTopLeft(), hotspot.getSize()));
       // prop
-      bool isProp = jObject["prop"].isInteger() && jObject["prop"].int_value == 1;
+      bool isProp = jObject["prop"].isInteger() && jObject["prop"].getInt() == 1;
       if (isProp)
         object->setType(ObjectType::Prop);
       // spot
-      bool isSpot = jObject["spot"].isInteger() && jObject["spot"].int_value == 1;
+      bool isSpot = jObject["spot"].isInteger() && jObject["spot"].getInt() == 1;
       if (isSpot)
         object->setType(ObjectType::Spot);
       // trigger
-      bool isTrigger = jObject["trigger"].isInteger() && jObject["trigger"].int_value == 1;
+      bool isTrigger = jObject["trigger"].isInteger() && jObject["trigger"].getInt() == 1;
       if (isTrigger)
         object->setType(ObjectType::Trigger);
 
@@ -250,47 +214,9 @@ struct Room::Impl {
 
       // animations
       if (jObject["animations"].isArray()) {
-        for (auto jAnimation : jObject["animations"].array_value) {
-          auto animName = jAnimation["name"].string_value;
-          auto anim = std::make_unique<Animation>(_sheet, animName);
-          if (!jAnimation["fps"].isNull()) {
-            anim->setFps(jAnimation["fps"].int_value);
-          }
-          std::vector<std::optional<int>> triggers;
-          if (!jAnimation["triggers"].isNull()) {
-            for (const auto &jtrigger : jAnimation["triggers"].array_value) {
-              if (!jtrigger.isNull()) {
-                auto name = jtrigger.string_value;
-                auto trigger = std::strtol(name.data() + 1, nullptr, 10);
-                triggers.emplace_back(trigger);
-              } else {
-                triggers.emplace_back(std::nullopt);
-              }
-            }
-          }
-          for (size_t i = 0; i < jAnimation["frames"].array_value.size(); i++) {
-            const auto &jFrame = jAnimation["frames"].array_value.at(i);
-            auto name = jFrame.string_value;
-            if (!_spriteSheet.hasRect(name))
-              continue;
-            auto rect = _spriteSheet.getRect(name);
-            auto size = _spriteSheet.getSourceSize(name);
-            auto sourceRect = _spriteSheet.getSpriteSourceSize(name);
-            std::optional<int> trigger = !triggers.empty() ? triggers.at(i) : std::nullopt;
-            std::function<void()> callback = nullptr;
-            if (trigger.has_value()) {
-              auto pObj = object.get();
-              callback = [trigger, pObj]() { pObj->trig(trigger.value()); };
-            }
-            AnimationFrame frame(rect, callback);
-            frame.setName(name);
-            frame.setSourceRect(sourceRect);
-            frame.setSize(size);
-            anim->addFrame(std::move(frame));
-          }
-          anim->reset();
-          object->getAnims().push_back(std::move(anim));
-        }
+        auto anims = AnimationLoader::parseAnimations(*object, jObject["animations"], _spriteSheet);
+        auto &objAnims = object->getAnims();
+        std::copy(anims.begin(), anims.end(), std::back_inserter(objAnims));
 
         int initState = 0;
         ScriptEngine::get(object.get(), "initState", initState);
@@ -299,6 +225,27 @@ struct Room::Impl {
       object->setRoom(_pRoom);
       _layers[0]->addEntity(*object);
       _objects.push_back(std::move(object));
+    }
+
+    // update parent, it has to been done after objects initialization
+    const auto &jObjects = jWimpy["objects"];
+    for (auto &object : _objects) {
+      auto name = object->getName();
+      auto it = std::find_if(jObjects.cbegin(), jObjects.cend(), [&name](const auto &jObject) {
+        return jObject["name"].getString() == name;
+      });
+      if (it == jObjects.cend())
+        continue;
+      auto jParent = (*it)["parent"];
+      if (jParent.isNull())
+        continue;
+      auto parent = jParent.getString();
+      auto itParent = std::find_if(_objects.cbegin(), _objects.cend(), [&parent](const auto &o) {
+        return o->getName() == parent;
+      });
+      if (itParent == _objects.cend())
+        continue;
+      object->setParent(itParent->get());
     }
 
     // sort objects
@@ -317,7 +264,7 @@ struct Room::Impl {
     sq_pushobject(v, roomTable);
     sq_pushnull(v);
     while (SQ_SUCCEEDED(sq_next(v, -2))) {
-      //here -1 is the value and -2 is the key
+//here -1 is the value and -2 is the key
       auto type = sq_gettype(v, -1);
       if (type == OT_TABLE) {
         const SQChar *key = nullptr;
@@ -371,47 +318,33 @@ struct Room::Impl {
     return 0;
   }
 
-  void loadScalings(GGPackValue &jWimpy) {
+  static Scaling parseScaling(std::string_view value) {
+    auto index = value.find('@');
+    auto scale = std::strtof(value.substr(0, index).data(), nullptr);
+    auto yPos = std::strtof(value.substr(index + 1).data(), nullptr);
+    return {scale, yPos};
+  }
+
+  void loadScalings(const ngf::GGPackValue &jWimpy) {
     if (jWimpy["scaling"].isArray()) {
       if (jWimpy["scaling"][0].isString()) {
         RoomScaling scaling;
-        for (const auto &jScaling : jWimpy["scaling"].array_value) {
-          auto value = jScaling.string_value;
-          auto index = value.find('@');
-          auto scale = std::strtof(value.substr(0, index).c_str(), nullptr);
-          auto yPos = std::strtof(value.substr(index + 1).c_str(), nullptr);
-          Scaling s{};
-          s.scale = scale;
-          s.yPos = yPos;
-          scaling.getScalings().push_back(s);
+        for (const auto &jScaling : jWimpy["scaling"]) {
+          scaling.getScalings().push_back(parseScaling(jScaling.getString()));
         }
         _scalings.push_back(scaling);
       } else if (jWimpy["scaling"][0].isHash()) {
-        for (auto jScaling : jWimpy["scaling"].array_value) {
+        for (auto jScaling : jWimpy["scaling"]) {
           RoomScaling scaling;
           if (jScaling["trigger"].isString()) {
-            scaling.setTrigger(jScaling["trigger"].string_value);
+            scaling.setTrigger(jScaling["trigger"].getString());
           }
-          for (const auto &jSubScaling : jScaling["scaling"].array_value) {
+          for (const auto &jSubScaling : jScaling["scaling"]) {
             if (jSubScaling.isString()) {
-              auto value = jSubScaling.string_value;
-              auto index = value.find('@');
-              auto scale = std::strtof(value.substr(0, index).c_str(), nullptr);
-              auto yPos = std::strtof(value.substr(index + 1).c_str(), nullptr);
-              Scaling s{};
-              s.scale = scale;
-              s.yPos = yPos;
-              scaling.getScalings().push_back(s);
+              scaling.getScalings().push_back(parseScaling(jSubScaling.getString()));
             } else if (jSubScaling.isArray()) {
-              for (const auto &jSubScalingScaling : jSubScaling.array_value) {
-                auto value = jSubScalingScaling.string_value;
-                auto index = value.find('@');
-                auto scale = std::strtof(value.substr(0, index).c_str(), nullptr);
-                auto yPos = std::strtof(value.substr(index + 1).c_str(), nullptr);
-                Scaling s{};
-                s.scale = scale;
-                s.yPos = yPos;
-                scaling.getScalings().push_back(s);
+              for (const auto &jSubScalingScaling : jSubScaling) {
+                scaling.getScalings().push_back(parseScaling(jSubScalingScaling.getString()));
               }
             }
           }
@@ -426,14 +359,15 @@ struct Room::Impl {
     }
   }
 
-  void loadWalkboxes(const GGPackValue &jWimpy) {
-    for (auto jWalkbox : jWimpy["walkboxes"].array_value) {
-      std::vector<sf::Vector2i> vertices;
-      auto polygon = jWalkbox["polygon"].string_value;
-      _parsePolygon(polygon, vertices);
-      Walkbox walkbox(vertices);
+  void loadWalkboxes(const ngf::GGPackValue &jWimpy) {
+    for (auto jWalkbox : jWimpy["walkboxes"]) {
+      std::vector<glm::ivec2> vertices;
+      auto polygon = jWalkbox["polygon"].getString();
+      parsePolygon(polygon, vertices);
+      ngf::Walkbox walkbox(vertices);
+      walkbox.setYAxisDirection(ngf::YAxisDirection::Up);
       if (jWalkbox["name"].isString()) {
-        auto walkboxName = jWalkbox["name"].string_value;
+        auto walkboxName = jWalkbox["name"].getString();
         walkbox.setName(walkboxName);
       }
       _walkboxes.push_back(walkbox);
@@ -441,75 +375,24 @@ struct Room::Impl {
     _pf.reset();
   }
 
-  static void toPath(const Walkbox &walkbox, ClipperLib::Path &path) {
-    const auto &vertices = walkbox.getVertices();
-    std::transform(vertices.rbegin(),
-                   vertices.rend(),
-                   std::back_inserter(path),
-                   [](const auto &p) -> ClipperLib::IntPoint {
-                     return {p.x, p.y};
-                   });
-  }
-
-  bool updateGraph(const sf::Vector2f &start) {
+  bool updateGraph(const glm::vec2 &start) {
     _graphWalkboxes.clear();
     if (!_walkboxes.empty()) {
-      mergeWalkboxes();
+      _graphWalkboxes = ngf::Walkbox::merge(_walkboxes);
       return sortWalkboxes(start);
     }
     return false;
   }
 
-  void mergeWalkboxes() {
-    ClipperLib::Paths solutions;
-    ClipperLib::Path path;
-    toPath(_walkboxes[0], path);
-    solutions.push_back(path);
-
-    for (int i = 1; i < static_cast<int>(_walkboxes.size()); i++) {
-      if (!_walkboxes[i].isEnabled())
-        continue;
-      path.clear();
-      toPath(_walkboxes[i], path);
-      ClipperLib::Clipper clipper;
-      clipper.AddPaths(solutions, ClipperLib::ptSubject, true);
-      clipper.AddPath(path, ClipperLib::ptClip, true);
-      solutions.clear();
-      clipper.Execute(ClipperLib::ctUnion, solutions, ClipperLib::pftEvenOdd);
-    }
-
-    for (auto &sol:solutions) {
-      std::vector<sf::Vector2i> sPoints;
-      std::transform(sol.begin(), sol.end(), std::back_inserter(sPoints), [](auto &p) -> sf::Vector2i {
-        return sf::Vector2i(p.X, p.Y);
-      });
-      bool isEnabled = ClipperLib::Orientation(sol);
-      if (!isEnabled) {
-        std::reverse(sPoints.begin(), sPoints.end());
-      }
-      Walkbox walkbox(sPoints);
-      walkbox.setEnabled(isEnabled);
-      _graphWalkboxes.push_back(walkbox);
-    }
-  }
-
-  bool sortWalkboxes(const sf::Vector2f &start) {
+  bool sortWalkboxes(const glm::vec2 &start) {
     auto it = std::find_if(_graphWalkboxes.begin(), _graphWalkboxes.end(), [start](auto &w) {
       return w.inside(start);
     });
     if (it != _graphWalkboxes.end()) {
       std::iter_swap(_graphWalkboxes.begin(), it);
     }
-    _pf = std::make_shared<PathFinder>(_graphWalkboxes);
+    _pf = std::make_shared<ngf::PathFinder>(_graphWalkboxes);
     return true;
-  }
-
-  void drawFade(sf::RenderTarget &target) const {
-    sf::RectangleShape fadeShape;
-    auto screen = target.getView().getSize();
-    fadeShape.setSize(sf::Vector2f(screen.x, screen.y));
-    fadeShape.setFillColor(_overlayColor);
-    target.draw(fadeShape);
   }
 };
 
@@ -525,6 +408,7 @@ std::unique_ptr<Room> Room::define(HSQOBJECT roomTable, const char *name) {
   }
 
   pRoom->setName(isPseudoRoom ? name : background);
+  ScriptEngine::set(pRoom.get(), "_key", pRoom->getName());
   pRoom->setPseudoRoom(isPseudoRoom);
   pRoom->load(background);
 
@@ -544,64 +428,64 @@ std::unique_ptr<Room> Room::define(HSQOBJECT roomTable, const char *name) {
 }
 
 Room::Room(HSQOBJECT roomTable)
-    : pImpl(std::make_unique<Impl>(roomTable)) {
-  _id = Locator<EntityManager>::get().getRoomId();
-  pImpl->setRoom(this);
+    : m_pImpl(std::make_unique<Impl>(roomTable)) {
+  m_id = Locator<EntityManager>::get().getRoomId();
+  m_pImpl->setRoom(this);
   ScriptEngine::set(this, "_id", getId());
 }
 
 Room::~Room() = default;
 
-void Room::setName(const std::string &name) { pImpl->_name = name; }
-std::string Room::getName() const { return pImpl->_name; }
+void Room::setName(const std::string &name) { m_pImpl->_name = name; }
+std::string Room::getName() const { return m_pImpl->_name; }
 
-std::vector<std::unique_ptr<Object>> &Room::getObjects() { return pImpl->_objects; }
-const std::vector<std::unique_ptr<Object>> &Room::getObjects() const { return pImpl->_objects; }
+std::vector<std::unique_ptr<Object>> &Room::getObjects() { return m_pImpl->_objects; }
+const std::vector<std::unique_ptr<Object>> &Room::getObjects() const { return m_pImpl->_objects; }
 
-std::vector<std::unique_ptr<Light>> &Room::getLights() { return pImpl->_lights; }
+std::array<Light, LightingShader::MaxLights> &Room::getLights() { return m_pImpl->_lights; }
 
-std::vector<Walkbox> &Room::getWalkboxes() { return pImpl->_walkboxes; }
+std::vector<ngf::Walkbox> &Room::getWalkboxes() { return m_pImpl->_walkboxes; }
 
-const Walkbox *Room::getWalkbox(const std::string &name) const {
-  auto it = std::find_if(pImpl->_walkboxes.begin(), pImpl->_walkboxes.end(), [&name](const Walkbox &w) {
+const ngf::Walkbox *Room::getWalkbox(const std::string &name) const {
+  auto it = std::find_if(m_pImpl->_walkboxes.begin(), m_pImpl->_walkboxes.end(), [&name](const auto &w) {
     return w.getName() == name;
   });
-  if (it != pImpl->_walkboxes.end()) {
+  if (it != m_pImpl->_walkboxes.end()) {
     return &(*it);
   }
   return nullptr;
 }
 
-std::vector<Walkbox> &Room::getGraphWalkboxes() { return pImpl->_graphWalkboxes; }
+std::vector<ngf::Walkbox> &Room::getGraphWalkboxes() { return m_pImpl->_graphWalkboxes; }
 
-sf::Vector2i Room::getRoomSize() const { return pImpl->_roomSize; }
+glm::ivec2 Room::getRoomSize() const { return m_pImpl->_roomSize; }
 
-int32_t Room::getScreenHeight() const { return pImpl->_screenHeight; }
+int32_t Room::getScreenHeight() const { return m_pImpl->_screenHeight; }
 
-int32_t Room::getFullscreen() const { return pImpl->_fullscreen; }
+int32_t Room::getFullscreen() const { return m_pImpl->_fullscreen; }
 
-HSQOBJECT &Room::getTable() { return pImpl->_roomTable; }
+HSQOBJECT &Room::getTable() { return m_pImpl->_roomTable; }
 
-void Room::setAmbientLight(sf::Color color) { pImpl->_ambientColor = color; }
+void Room::setAmbientLight(ngf::Color color) { m_pImpl->_ambientColor = color; }
 
-sf::Color Room::getAmbientLight() const { return pImpl->_ambientColor; }
+ngf::Color Room::getAmbientLight() const { return m_pImpl->_ambientColor; }
 
 void Room::setAsParallaxLayer(Entity *pEntity, int layerNum) {
-  for (auto &layer : pImpl->_layers) {
+  for (auto &layer : m_pImpl->_layers) {
     layer.second->removeEntity(*pEntity);
   }
-  pImpl->_layers[layerNum]->addEntity(*pEntity);
+  m_pImpl->_layers[layerNum]->addEntity(*pEntity);
 }
 
-void Room::roomLayer(int layerNum, bool enabled) { pImpl->_layers[layerNum]->setEnabled(enabled); }
+void Room::roomLayer(int layerNum, bool enabled) { m_pImpl->_layers[layerNum]->setEnabled(enabled); }
 
 void Room::removeEntity(Entity *pEntity) {
-  for (auto &layer : pImpl->_layers) {
+  for (auto &layer : m_pImpl->_layers) {
     layer.second->removeEntity(*pEntity);
   }
-  pImpl->_objects.erase(std::remove_if(pImpl->_objects.begin(), pImpl->_objects.end(),
-                                       [pEntity](std::unique_ptr<Object> &pObj) { return pObj.get() == pEntity; }),
-                        pImpl->_objects.end());
+  m_pImpl->_objects.erase(std::remove_if(m_pImpl->_objects.begin(), m_pImpl->_objects.end(),
+                                         [pEntity](auto &pObj) { return pObj.get() == pEntity; }),
+                          m_pImpl->_objects.end());
 }
 
 void Room::load(const char *name) {
@@ -613,8 +497,7 @@ void Room::load(const char *name) {
   if (!Locator<EngineSettings>::get().hasEntry(wimpyFilename))
     return;
 
-  GGPackValue hash;
-  Locator<EngineSettings>::get().readEntry(wimpyFilename, hash);
+  auto hash = Locator<EngineSettings>::get().readEntry(wimpyFilename);
 
 #if 0
   std::ofstream out;
@@ -623,18 +506,18 @@ void Room::load(const char *name) {
   out.close();
 #endif
 
-  pImpl->_sheet = hash["sheet"].string_value;
-  pImpl->_screenHeight = hash["height"].int_value;
-  pImpl->_roomSize = (sf::Vector2i) _parsePos(hash["roomsize"].string_value);
+  m_pImpl->_sheet = hash["sheet"].getString();
+  m_pImpl->_screenHeight = hash["height"].getInt();
+  m_pImpl->_roomSize = (glm::ivec2) parsePos(hash["roomsize"].getString());
 
   // load json file
-  pImpl->_spriteSheet.load(pImpl->_sheet);
+  m_pImpl->_spriteSheet.load(m_pImpl->_sheet);
 
-  pImpl->loadBackgrounds(hash);
-  pImpl->loadLayers(hash);
-  pImpl->loadObjects(hash);
-  pImpl->loadScalings(hash);
-  pImpl->loadWalkboxes(hash);
+  m_pImpl->loadBackgrounds(hash);
+  m_pImpl->loadLayers(hash);
+  m_pImpl->loadObjects(hash);
+  m_pImpl->loadScalings(hash);
+  m_pImpl->loadWalkboxes(hash);
 }
 
 TextObject &Room::createTextObject(const std::string &fontName) {
@@ -646,61 +529,43 @@ TextObject &Room::createTextObject(const std::string &fontName) {
     path.append(fontName).append("Font.fnt");
   }
 
-  object->getFont().loadFromFile(path);
+  const auto &font = m_pImpl->_textureManager.getFntFont(path);
+  object->setFont(&font);
   auto &obj = *object;
-  obj.setVisible(true);
   obj.setRoom(this);
   std::ostringstream s;
-  s << "TextObject #" << pImpl->_objects.size();
-  pImpl->_objects.push_back(std::move(object));
-  pImpl->_layers[0]->addEntity(obj);
+  s << "TextObject #" << m_pImpl->_objects.size();
+  m_pImpl->_objects.push_back(std::move(object));
+  m_pImpl->_layers[0]->addEntity(obj);
   return obj;
 }
 
-void Room::deleteObject(Object &object) { pImpl->_layers[0]->removeEntity(object); }
+void Room::deleteObject(Object &object) {
+  m_pImpl->_objectsToDelete.push_back(&object);
+}
 
-Object &Room::createObject(const std::vector<std::string> &anims) { return createObject(pImpl->_sheet, anims); }
+Object &Room::createObject(const std::vector<std::string> &anims) { return createObject(m_pImpl->_sheet, anims); }
 
-Object &Room::createObject(const std::string &sheet, const std::vector<std::string> &anims) {
-  // load json file
-  std::string jsonFilename;
-  jsonFilename.append(sheet).append(".json");
-  std::vector<char> buffer;
-  Locator<EngineSettings>::get().readEntry(jsonFilename, buffer);
-  auto json = ng::Json::Parser::parse(buffer);
-
+Object &Room::createObject(const std::string &sheet, const std::vector<std::string> &frames) {
   auto object = std::make_unique<Object>();
-  auto animation = std::make_unique<Animation>(sheet, "state0");
-  for (auto n : anims) {
-    if (json["frames"][n].isNull())
-      continue;
+  auto spriteSheet = m_pImpl->_textureManager.getSpriteSheet(sheet);
 
-    checkLanguage(n);
+  Animation anim;
+  anim.name = "state0";
+  anim.texture = spriteSheet.getTextureName();
 
-    auto frame = json["frames"][n]["frame"];
-    auto rect = _toRect(frame);
-    auto size = _toSize(json["frames"][n]["sourceSize"]);
-    auto sourceRect = _toRect(json["frames"][n]["spriteSourceSize"]);
-    AnimationFrame animFrame(rect);
-    animFrame.setSourceRect(sourceRect);
-    animFrame.setSize(size);
-    animation->addFrame(std::move(animFrame));
+  for (auto frame :frames) {
+    checkLanguage(frame);
+    anim.frames.push_back(spriteSheet.getItem(frame));
   }
-  animation->reset();
-  object->getAnims().push_back(std::move(animation));
-
-  for (auto &anim : object->getAnims()) {
-    if (!anim->empty()) {
-      object->setAnimation(anim->getName());
-      break;
-    }
-  }
+  object->getAnims().push_back(anim);
+  object->setStateAnimIndex(0);
+  object->setTemporary(true);
+  object->setRoom(this);
+  object->setZOrder(1);
   auto &obj = *object;
-  obj.setTemporary(true);
-  obj.setRoom(this);
-  obj.setZOrder(1);
-  pImpl->_layers[0]->addEntity(obj);
-  pImpl->_objects.push_back(std::move(object));
+  m_pImpl->_layers[0]->addEntity(obj);
+  m_pImpl->_objects.push_back(std::move(object));
   return obj;
 }
 
@@ -709,26 +574,24 @@ Object &Room::createObject(const std::string &image) {
   checkLanguage(name);
 
   const std::vector<std::string> anims{name};
-  auto texture = pImpl->_textureManager.getTexture(name);
-
   auto object = std::make_unique<Object>();
-  auto animation = std::make_unique<Animation>(name, "state0");
+  auto texture = Locator<ResourceManager>::get().getTexture(name + ".png");
+
+  Animation anim;
   auto size = texture->getSize();
-  sf::IntRect rect(0, 0, size.x, size.y);
-  AnimationFrame animFrame(rect);
-  animFrame.setSourceRect(rect);
-  animFrame.setSize(sf::Vector2i(size.x, size.y));
-  animation->addFrame(std::move(animFrame));
-  animation->reset();
-  object->getAnims().push_back(std::move(animation));
+  ngf::irect rect = ngf::irect::fromPositionSize({0, 0}, size);
+  anim.name = "state0";
+  anim.texture = name + ".png";
+  anim.frames.push_back(SpriteSheetItem{"state0", rect, rect, size, false});
+  object->getAnims().push_back(anim);
 
   object->setAnimation("state0");
   auto &obj = *object;
   obj.setTemporary(true);
   obj.setZOrder(1);
   obj.setRoom(this);
-  pImpl->_layers[0]->addEntity(obj);
-  pImpl->_objects.push_back(std::move(object));
+  m_pImpl->_layers[0]->addEntity(obj);
+  m_pImpl->_objects.push_back(std::move(object));
   return obj;
 }
 
@@ -739,151 +602,169 @@ Object &Room::createObject() {
   obj.setTemporary(true);
   obj.setZOrder(1);
   obj.setRoom(this);
-  pImpl->_layers[0]->addEntity(obj);
-  pImpl->_objects.push_back(std::move(object));
+  m_pImpl->_layers[0]->addEntity(obj);
+  m_pImpl->_objects.push_back(std::move(object));
   return obj;
 }
 
-const Graph *Room::getGraph() const {
-  if (pImpl->_pf) {
-    return pImpl->_pf->getGraph().get();
+const ngf::Graph *Room::getGraph() const {
+  if (m_pImpl->_pf) {
+    return m_pImpl->_pf->getGraph().get();
   }
   return nullptr;
 }
 
-void Room::update(const sf::Time &elapsed) {
-  for (auto &&layer : pImpl->_layers) {
+void Room::update(const ngf::TimeSpan &elapsed) {
+  if (!m_pImpl->_objectsToDelete.empty()) {
+    for (auto &obj : m_pImpl->_objectsToDelete) {
+      for (auto &&layer : m_pImpl->_layers) {
+        layer.second->removeEntity(*obj);
+      }
+      m_pImpl->_objects.erase(std::remove_if(
+          m_pImpl->_objects.begin(), m_pImpl->_objects.end(),
+          [&obj](auto &pObj) { return pObj.get() == obj; }), m_pImpl->_objects.end());
+    }
+    m_pImpl->_objectsToDelete.clear();
+  }
+
+  for (auto &&layer : m_pImpl->_layers) {
     layer.second->update(elapsed);
   }
 }
 
-void Room::draw(sf::RenderTarget &target, const sf::Vector2f &cameraPos) const {
-  sf::RenderStates states;
-  if (pImpl->_selectedEffect != RoomEffectConstants::EFFECT_NONE) {
-    states.shader = &pImpl->_shader;
-  }
+void Room::draw(ngf::RenderTarget &target, const glm::vec2 &cameraPos) const {
+  // update lighting
+  auto nLights = m_pImpl->_numLights;
+  m_pImpl->_lightingShader.setAmbientColor(m_pImpl->_ambientColor);
+  m_pImpl->_lightingShader.setNumberLights(nLights);
+  m_pImpl->_lightingShader.setLights(m_pImpl->_lights);
 
-  auto screen = target.getView().getSize();
-  auto halfScreen = sf::Vector2f(screen.x / 2.f, screen.y / 2.f);
-
-  for (const auto &layer : pImpl->_layers) {
+  for (const auto &layer : m_pImpl->_layers) {
     auto parallax = layer.second->getParallax();
+    ngf::Transform t;
+    t.move({-cameraPos.x * parallax.x, cameraPos.y * parallax.y});
 
-    sf::Transform t;
-    t.rotate(pImpl->_rotation, halfScreen.x, halfScreen.y);
-    t.translate(-cameraPos.x * parallax.x, cameraPos.y * parallax.y);
-    states.transform = t;
+    ngf::RenderStates states;
+    states.shader = &m_pImpl->_lightingShader;
+    states.transform = t.getTransform();
     layer.second->draw(target, states);
   }
 }
 
-void Room::drawForeground(sf::RenderTarget &target, const sf::Vector2f &cameraPos) const {
-  sf::RenderStates states;
-  if (pImpl->_selectedEffect != RoomEffectConstants::EFFECT_NONE) {
-    states.shader = &pImpl->_shader;
-  }
+void Room::drawForeground(ngf::RenderTarget &target, const glm::vec2 &cameraPos) const {
+  ngf::RenderStates states;
+  states.shader = &m_pImpl->_lightingShader;
+  m_pImpl->_lightingShader.setNumberLights(0);
+  m_pImpl->_lightingShader.setAmbientColor(ngf::Colors::White);
 
-  auto screen = target.getView().getSize();
-  auto halfScreen = sf::Vector2f(screen.x / 2.f, screen.y / 2.f);
-
-  pImpl->drawFade(target);
-
-  for (const auto &layer : pImpl->_layers) {
+  for (const auto &layer : m_pImpl->_layers) {
     auto parallax = layer.second->getParallax();
+    ngf::Transform t;
+    t.setPosition({-cameraPos.x * parallax.x, cameraPos.y * parallax.y});
 
-    sf::Transform t;
-    t.rotate(pImpl->_rotation, halfScreen.x, halfScreen.y);
-    t.translate(-cameraPos.x * parallax.x, cameraPos.y * parallax.y);
-    states.transform = t;
+    states.transform = t.getTransform();
     layer.second->drawForeground(target, states);
   }
 }
 
-const RoomScaling &Room::getRoomScaling() const { return pImpl->_scaling; }
+const RoomScaling &Room::getRoomScaling() const { return m_pImpl->_scaling; }
 
-void Room::setRoomScaling(const RoomScaling &scaling) { pImpl->_scaling = scaling; }
+void Room::setRoomScaling(const RoomScaling &scaling) { m_pImpl->_scaling = scaling; }
 
 void Room::setWalkboxEnabled(const std::string &name, bool isEnabled) {
-  auto it = std::find_if(pImpl->_walkboxes.begin(), pImpl->_walkboxes.end(),
-                         [&name](const Walkbox &walkbox) { return walkbox.getName() == name; });
-  if (it == pImpl->_walkboxes.end()) {
+  auto it = std::find_if(m_pImpl->_walkboxes.begin(), m_pImpl->_walkboxes.end(),
+                         [&name](const auto &walkbox) { return walkbox.getName() == name; });
+  if (it == m_pImpl->_walkboxes.end()) {
     error("walkbox {} has not been found", name);
     return;
   }
   it->setEnabled(isEnabled);
-  pImpl->_pf.reset();
+  m_pImpl->_pf.reset();
 }
 
-std::vector<RoomScaling> &Room::getScalings() { return pImpl->_scalings; }
+std::vector<RoomScaling> &Room::getScalings() { return m_pImpl->_scalings; }
 
-std::vector<sf::Vector2f> Room::calculatePath(sf::Vector2f start, sf::Vector2f end) const {
-  if (!pImpl->_pf) {
-    if (!pImpl->updateGraph(start)) {
-      return std::vector<sf::Vector2f>();
+std::vector<glm::vec2> Room::calculatePath(glm::vec2 start, glm::vec2 end) const {
+  if (!m_pImpl->_pf) {
+    if (!m_pImpl->updateGraph(start)) {
+      return std::vector<glm::vec2>();
     }
-  } else if (!pImpl->_graphWalkboxes.empty() && !pImpl->_graphWalkboxes[0].inside(start)) {
-    if (!pImpl->sortWalkboxes(start)) {
-      return std::vector<sf::Vector2f>();
+  } else if (!m_pImpl->_graphWalkboxes.empty() && !m_pImpl->_graphWalkboxes[0].inside(start)) {
+    if (!m_pImpl->sortWalkboxes(start)) {
+      return std::vector<glm::vec2>();
     }
   }
-  return pImpl->_pf->calculatePath(start, end);
+  return m_pImpl->_pf->calculatePath(start, end);
 }
 
-float Room::getRotation() const { return pImpl->_rotation; }
+float Room::getRotation() const { return m_pImpl->_rotation; }
 
-void Room::setRotation(float angle) { pImpl->_rotation = angle; }
+void Room::setRotation(float angle) { m_pImpl->_rotation = angle; }
 
-Light *Room::createLight(sf::Color color, sf::Vector2i pos) {
-  auto light = std::make_unique<Light>(color, pos);
-  Light *pLight = light.get();
-  pImpl->_lights.emplace_back(std::move(light));
-  return pLight;
+Light *Room::createLight(ngf::Color color, glm::ivec2 pos) {
+  auto &light = m_pImpl->_lights[m_pImpl->_numLights++];
+  light.color = color;
+  light.pos = pos;
+  return &light;
 }
+
+int Room::getNumberLights() const { return m_pImpl->_numLights; }
+
+LightingShader& Room::getLightingShader() { return m_pImpl->_lightingShader; }
 
 void Room::exit() {
-  for (auto &obj : pImpl->_objects) {
+  m_pImpl->_numLights = 0;
+  for (auto &obj : m_pImpl->_objects) {
     if (!obj->isTemporary())
       continue;
-    for (auto &layer : pImpl->_layers) {
+    for (auto &layer : m_pImpl->_layers) {
       layer.second->removeEntity(*obj);
     }
   }
-  pImpl->_objects.erase(std::remove_if(pImpl->_objects.begin(), pImpl->_objects.end(),
-                                       [](auto &pObj) { return pObj->isTemporary(); }),
-                        pImpl->_objects.end());
+  m_pImpl->_objects.erase(std::remove_if(m_pImpl->_objects.begin(), m_pImpl->_objects.end(),
+                                         [](auto &pObj) { return pObj->isTemporary(); }), m_pImpl->_objects.end());
 }
 
-void Room::setEffect(int effect) { pImpl->setEffect(effect); }
+void Room::setEffect(int effect) { m_pImpl->setEffect(effect); }
 
-int Room::getEffect() const { return pImpl->_selectedEffect; }
+int Room::getEffect() const { return m_pImpl->_selectedEffect; }
 
-void Room::setOverlayColor(sf::Color color) { pImpl->_overlayColor = color; }
+void Room::setOverlayColor(ngf::Color color) { m_pImpl->_overlayColor = color; }
 
-sf::Color Room::getOverlayColor() const { return pImpl->_overlayColor; }
+ngf::Color Room::getOverlayColor() const { return m_pImpl->_overlayColor; }
 
-const SpriteSheet &Room::getSpriteSheet() const { return pImpl->_spriteSheet; }
+const SpriteSheet &Room::getSpriteSheet() const { return m_pImpl->_spriteSheet; }
 
-sf::Vector2i Room::getScreenSize() const {
-  auto height = getScreenHeight();
-  switch (height) {
-  case 0:return getRoomSize();
-  case 128:return sf::Vector2i(320, 180);
-  case 172:return sf::Vector2i(428, 240);
-  case 256:return sf::Vector2i(640, 360);
-  default: {
-    height = 180.f * height / 128.f;
-    auto ratio = 320.f / 180.f;
-    return sf::Vector2i(ratio * height, height);
+glm::ivec2 Room::getScreenSize() const {
+  glm::ivec2 screen;
+  if (getFullscreen() == 1) {
+    screen = getRoomSize();
+    if (getScreenHeight() != 0) {
+      screen.y = getScreenHeight();
+    }
+  } else {
+    auto height = getScreenHeight();
+    switch (height) {
+    case 0:return getRoomSize();
+    case 128:return glm::ivec2(320, 180);
+    case 172:return glm::ivec2(428, 240);
+    case 256:return glm::ivec2(640, 360);
+    default: {
+      height = 180.f * height / 128.f;
+      auto ratio = 320.f / 180.f;
+      return glm::ivec2(ratio * height, height);
+    }
+    }
   }
-  }
+  return screen;
 }
 
 void Room::setPseudoRoom(bool pseudoRoom) {
-  pImpl->_pseudoRoom = pseudoRoom;
+  m_pImpl->_pseudoRoom = pseudoRoom;
 }
 
 bool Room::isPseudoRoom() const {
-  return pImpl->_pseudoRoom;
+  return m_pImpl->_pseudoRoom;
 }
 
 } // namespace ng

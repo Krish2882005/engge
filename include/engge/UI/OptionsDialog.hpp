@@ -1,27 +1,25 @@
 #pragma once
-#include <SFML/Graphics.hpp>
+#include <ngf/Graphics/Drawable.h>
 
 namespace ng {
-class OptionsDialog : public sf::Drawable {
+class OptionsDialog final : public ngf::Drawable {
 public:
-  typedef std::function<void()> Callback;
+  using Callback = std::function<void()>;
 
+  void draw(ngf::RenderTarget &target, ngf::RenderStates states) const final;
 public:
   OptionsDialog();
-  ~OptionsDialog() override;
+  ~OptionsDialog() final;
 
   void setCallback(Callback callback);
   void setSaveEnabled(bool enabled);
   void setEngine(Engine *pEngine);
-  void update(const sf::Time &elapsed);
+  void update(const ngf::TimeSpan &elapsed);
 
   void showHelp();
 
 private:
-  void draw(sf::RenderTarget &target, sf::RenderStates states) const override;
-
-private:
   struct Impl;
-  std::unique_ptr<Impl> _pImpl;
+  std::unique_ptr<Impl> m_pImpl;
 };
 }

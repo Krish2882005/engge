@@ -1,24 +1,25 @@
+#include <ngf/IO/Json/JsonParser.h>
 #include "engge/Engine/EngineSettings.hpp"
-#include "engge/Parsers/JsonTokenReader.hpp"
 #include "engge/System/Locator.hpp"
-#include "../System/_Util.hpp"
+#include "../Util/Util.hpp"
 #include "engge/Graphics/SpriteSheet.hpp"
 
 namespace ng {
 void SpriteSheet::load(const std::string &name) {
-  _textureName = name;
+  if (m_textureName == name)
+    return;
 
-  _rects.clear();
-  _spriteSourceSize.clear();
-  _sourceSize.clear();
+  m_textureName = name + ".png";
 
-  ng::GGPackValue json;
+  m_rects.clear();
+  m_spriteSourceSize.clear();
+  m_sourceSize.clear();
 
-  std::string jsonFilename;
-  jsonFilename.append(name).append(".json");
+  ngf::GGPackValue json;
+
   {
-    std::vector<char> buffer;
-    Locator<EngineSettings>::get().readEntry(jsonFilename, buffer);
+    auto jsonFilename = name + ".json";
+    auto buffer = Locator<EngineSettings>::get().readBuffer(jsonFilename);
 
 #if 0
     std::ofstream out;
@@ -26,39 +27,42 @@ void SpriteSheet::load(const std::string &name) {
     out.write(buffer.data(), buffer.size());
     out.close();
 #endif
-    ng::Json::Parser::parse(buffer, json);
+    json = ngf::Json::parse(buffer.data());
   }
 
   auto jFrames = json["frames"];
-  for (auto &it : jFrames.hash_value) {
-    auto &n = it.first;
-    auto rect = _toRect(json["frames"][n]["frame"]);
-    _rects.insert(std::make_pair(n, rect));
-    rect = _toRect(json["frames"][n]["spriteSourceSize"]);
-    _spriteSourceSize.insert(std::make_pair(n, rect));
-    auto size = _toSize(json["frames"][n]["sourceSize"]);
-    _sourceSize.insert(std::make_pair(n, size));
+  for (auto &it : jFrames.items()) {
+    auto rect = toRect(it.value()["frame"]);
+    m_rects.insert(std::make_pair(it.key(), rect));
+    rect = toRect(it.value()["spriteSourceSize"]);
+    m_spriteSourceSize.insert(std::make_pair(it.key(), rect));
+    auto size = toSize(it.value()["sourceSize"]);
+    m_sourceSize.insert(std::make_pair(it.key(), size));
   }
 }
 
 bool SpriteSheet::hasRect(const std::string &name) const {
-  const auto it = _rects.find(name);
-  return it != _rects.end();
+  const auto it = m_rects.find(name);
+  return it != m_rects.end();
 }
 
-sf::IntRect SpriteSheet::getRect(const std::string &name) const {
-  const auto it = _rects.find(name);
+ngf::irect SpriteSheet::getRect(const std::string &name) const {
+  const auto it = m_rects.find(name);
   return it->second;
 }
 
-sf::IntRect SpriteSheet::getSpriteSourceSize(const std::string &name) const {
-  const auto it = _spriteSourceSize.find(name);
+ngf::irect SpriteSheet::getSpriteSourceSize(const std::string &name) const {
+  const auto it = m_spriteSourceSize.find(name);
   return it->second;
 }
 
-sf::Vector2i SpriteSheet::getSourceSize(const std::string &name) const {
-  const auto it = _sourceSize.find(name);
+glm::ivec2 SpriteSheet::getSourceSize(const std::string &name) const {
+  const auto it = m_sourceSize.find(name);
   return it->second;
+}
+
+[[nodiscard]] SpriteSheetItem SpriteSheet::getItem(const std::string &name) const {
+  return SpriteSheetItem{name, getRect(name), getSpriteSourceSize(name), getSourceSize(name), false};
 }
 
 } // namespace ng

@@ -3,10 +3,9 @@
 #include "engge/Engine/EntityManager.hpp"
 
 namespace ng {
-Light::Light(sf::Color color, sf::Vector2i pos)
-    : _color(color), _pos(pos) {
-  sq_resetobject(&_table);
-  _id = Locator<EntityManager>::get().getLightId();
+Light::Light() {
+  sq_resetobject(&table);
+  m_id = Locator<EntityManager>::get().getLightId();
 }
 
 Light::~Light() = default;

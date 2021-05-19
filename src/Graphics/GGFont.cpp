@@ -1,38 +1,33 @@
 #include <fstream>
+#include <ngf/IO/Json/JsonParser.h>
 #include "engge/Engine/EngineSettings.hpp"
 #include "engge/Graphics/GGFont.hpp"
 #include "engge/System/Locator.hpp"
-#include "../System/_Util.hpp"
+#include "../Util/Util.hpp"
 
 namespace ng {
 GGFont::~GGFont() = default;
 
-const sf::Texture &GGFont::getTexture(unsigned int) const { return *_texture; }
+const std::shared_ptr<ngf::Texture> &GGFont::getTexture(unsigned int) const { return m_texture; }
 
-float GGFont::getKerning(sf::Uint32, sf::Uint32, unsigned int) const { return 0; }
+float GGFont::getKerning(unsigned int, unsigned int, unsigned int) const { return 0; }
 
-int GGFont::getLineHeight() const {
-  return 26;
-}
-
-const sf::Glyph &GGFont::getGlyph(sf::Uint32 codePoint, unsigned int, bool, float) const {
-  if (_glyphs.find(codePoint) == _glyphs.end())
-    return _glyphs.at(0x20);
-  return _glyphs.at(codePoint);
+const ngf::Glyph &GGFont::getGlyph(unsigned int codePoint) const {
+  if (m_glyphs.find(codePoint) == m_glyphs.end())
+    return m_glyphs.at(0x20);
+  return m_glyphs.at(codePoint);
 }
 
 void GGFont::setTextureManager(ResourceManager *textureManager) {
-  _resourceManager = textureManager;
+  m_resourceManager = textureManager;
 }
 
 void GGFont::load(const std::string &path) {
-  _path = path;
-  _jsonFilename = path;
-  _jsonFilename.append(".json");
+  m_path = path + ".png";
+  m_jsonFilename = path + ".json";
 
-  std::vector<char> buffer;
-  Locator<EngineSettings>::get().readEntry(_jsonFilename, buffer);
-  _json = ng::Json::Parser::parse(buffer);
+  auto buffer = Locator<EngineSettings>::get().readBuffer(m_jsonFilename);
+  m_json = ngf::Json::parse(buffer.data());
 
 #if 0
   std::ofstream o;
@@ -41,19 +36,19 @@ void GGFont::load(const std::string &path) {
   o.close();
 #endif
 
-  for (const auto &jFrame : _json["frames"].hash_value) {
-    auto sValue = jFrame.first;
-    auto key = std::stoi(sValue);
-    auto frame = _toRect(_json["frames"][sValue]["frame"]);
-    auto spriteSourceSize = _toRect(_json["frames"][sValue]["spriteSourceSize"]);
-    auto sourceSize = _toSize(_json["frames"][sValue]["sourceSize"]);
-    sf::Glyph glyph;
-    glyph.advance = std::max(sourceSize.x - spriteSourceSize.left - 4, 0);
-    glyph.bounds = (sf::FloatRect) spriteSourceSize;
-    glyph.textureRect = frame;
-    _glyphs[key] = glyph;
-  }
+  m_texture = m_resourceManager->getTexture(m_path);
 
-  _texture = _resourceManager->getTexture(_path);
+  for (const auto &jFrame : m_json["frames"].items()) {
+    auto sValue = jFrame.key();
+    auto key = std::stoi(sValue);
+    auto frame = toRect(m_json["frames"][sValue]["frame"]);
+    auto spriteSourceSize = toRect(m_json["frames"][sValue]["spriteSourceSize"]);
+    auto sourceSize = toSize(m_json["frames"][sValue]["sourceSize"]);
+    ngf::Glyph glyph;
+    glyph.advance = std::max(sourceSize.x - spriteSourceSize.getTopLeft().x - 4, 0);
+    glyph.bounds = spriteSourceSize;
+    glyph.textureRect = frame;
+    m_glyphs[key] = glyph;
+  }
 }
 } // namespace ng

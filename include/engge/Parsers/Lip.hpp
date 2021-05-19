@@ -1,13 +1,14 @@
 #pragma once
+#include <string>
 #include <vector>
-#include <SFML/System.hpp>
+#include <ngf/System/TimeSpan.h>
 
 // see https://github.com/DanielSWolf/rhubarb-lip-sync for more details
 
 namespace ng {
 struct NGLipData {
 public:
-  sf::Time time;
+  ngf::TimeSpan time;
   char letter;
 };
 
@@ -17,11 +18,11 @@ public:
 
   void clear();
   void load(const std::string &path);
-  [[nodiscard]] std::vector<NGLipData> getData() const { return _data; }
-  [[nodiscard]] std::string getPath() const { return _path; }
+  [[nodiscard]] std::vector<NGLipData> getData() const { return m_data; }
+  [[nodiscard]] std::string getPath() const { return m_path; }
 
 private:
-  std::string _path;
-  std::vector<NGLipData> _data;
+  std::string m_path;
+  std::vector<NGLipData> m_data;
 };
 } // namespace ng

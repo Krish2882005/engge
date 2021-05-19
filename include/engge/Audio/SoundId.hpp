@@ -1,4 +1,7 @@
 #pragma once
+#include <memory>
+#include <ngf/Audio/SoundHandle.h>
+#include <engge/Engine/ChangeProperty.hpp>
 #include "SoundCategory.hpp"
 #include "SoundDefinition.hpp"
 
@@ -6,40 +9,32 @@ namespace ng {
 class Entity;
 class SoundManager;
 
-class SoundId : public Sound {
+class SoundId final : public Sound {
 public:
-  explicit SoundId(SoundManager &soundManager, SoundDefinition *pSoundDefinition, SoundCategory category);
-  ~SoundId() override;
+  explicit SoundId(SoundManager &soundManager,
+                   std::shared_ptr<SoundDefinition> soundDefinition,
+                   std::shared_ptr<ngf::SoundHandle> sound,
+                   SoundCategory category,
+                   int entityId = 0);
+  ~SoundId() final;
 
-  void play(int loopTimes);
-  void stop();
-  void pause();
-  void resume();
+  std::shared_ptr<ng::SoundDefinition> getSoundDefinition() { return m_soundDefinition; }
+  std::shared_ptr<ngf::SoundHandle> getSoundHandle() { return m_sound; }
+  [[nodiscard]] SoundCategory getSoundCategory() const { return m_category; }
 
-  void setVolume(float volume);
-  [[nodiscard]] float getVolume() const;
-
-  SoundDefinition *getSoundDefinition();
   [[nodiscard]] bool isPlaying() const;
-  int getLoopTimes() const { return _loopTimes; }
-  SoundCategory getSoundCategory() const { return _category; }
-  void fadeTo(float volume, const sf::Time &duration);
+  void stop(const ngf::TimeSpan &fadeOutTime = ngf::TimeSpan::Zero);
 
-  void setEntity(int id);
-
-  void update(const sf::Time &elapsed);
+  void update(const ngf::TimeSpan &elapsed);
 
 private:
   void updateVolume();
 
 private:
-  SoundManager &_soundManager;
-  SoundDefinition *_pSoundDefinition{nullptr};
-  sf::Sound _sound;
-  std::unique_ptr<ChangeProperty<float>> _fade;
-  SoundCategory _category;
-  float _volume{1.0f};
-  int _loopTimes{0};
-  int _entityId{0};
+  SoundManager &m_soundManager;
+  std::shared_ptr<SoundDefinition> m_soundDefinition{};
+  std::shared_ptr<ngf::SoundHandle> m_sound{};
+  SoundCategory m_category;
+  const int m_entityId{0};
 };
 } // namespace ng

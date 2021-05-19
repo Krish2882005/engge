@@ -1,7 +1,7 @@
 #pragma once
-#include <SFML/Graphics/Color.hpp>
 #include <array>
 #include <string>
+#include <ngf/Graphics/Color.h>
 
 namespace ng {
 namespace VerbConstants {
@@ -44,24 +44,24 @@ struct Verb {
 
 class VerbSlot {
 public:
-  void setVerb(int index, const Verb &verb) { _verbs.at(index) = verb; }
-  [[nodiscard]] const Verb &getVerb(int index) const { return _verbs.at(index); }
+  void setVerb(int index, const Verb &verb) { m_verbs.at(index) = verb; }
+  [[nodiscard]] const Verb &getVerb(int index) const { return m_verbs.at(index); }
 
 private:
-  std::array<Verb, 10> _verbs;
+  std::array<Verb, 10> m_verbs;
 };
 
 struct VerbUiColors {
-  sf::Color sentence;
-  sf::Color verbNormal;
-  sf::Color verbNormalTint;
-  sf::Color verbHighlight;
-  sf::Color verbHighlightTint;
-  sf::Color dialogNormal;
-  sf::Color dialogHighlight;
-  sf::Color inventoryFrame;
-  sf::Color inventoryBackground;
-  sf::Color retroNormal;
-  sf::Color retroHighlight;
+  ngf::Color sentence;
+  ngf::Color verbNormal;
+  ngf::Color verbNormalTint;
+  ngf::Color verbHighlight;
+  ngf::Color verbHighlightTint;
+  ngf::Color dialogNormal;
+  ngf::Color dialogHighlight;
+  ngf::Color inventoryFrame;
+  ngf::Color inventoryBackground;
+  ngf::Color retroNormal;
+  ngf::Color retroHighlight;
 };
 } // namespace ng

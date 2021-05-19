@@ -9,21 +9,18 @@ namespace ng {
 Sound::~Sound() = default;
 
 SoundDefinition::SoundDefinition(std::string path)
-    : _path(std::move(path)), _isLoaded(false) {
-  _id = Locator<EntityManager>::get().getSoundId();
+    : m_path(std::move(path)) {
+  m_id = Locator<EntityManager>::get().getSoundId();
 }
 
 SoundDefinition::~SoundDefinition() = default;
 
 void SoundDefinition::load() {
-  if (_isLoaded)
+  if (m_isLoaded)
     return;
-  std::vector<char> buffer;
-  Locator<EngineSettings>::get().readEntry(_path, buffer);
-  _isLoaded = _buffer.loadFromMemory(buffer.data(), buffer.size());
-  if (!_isLoaded) {
-    error("Can't load the sound {}", _path);
-  }
+  auto buffer = Locator<EngineSettings>::get().readBuffer(m_path);
+  m_buffer.loadFromMemory(buffer.data(), buffer.size());
+  m_isLoaded = true;
 }
 
 } // namespace ng

@@ -2,6 +2,7 @@
 #include <cassert>
 #include <functional>
 #include <string>
+#include <squirrel.h>
 #include "../../../extlibs/squirrel/squirrel/sqobject.h"
 #include "engge/Engine/Engine.hpp"
 #include "engge/Engine/Interpolations.hpp"
@@ -28,7 +29,7 @@ public:
   void setEngine(Engine &engine);
   static Engine &getEngine();
 
-  static HSQUIRRELVM getVm() { return _vm; }
+  static HSQUIRRELVM getVm() { return m_vm; }
 
   static SQObjectPtr toSquirrel(const std::string &value);
 
@@ -96,11 +97,11 @@ public:
                           T... args);
 
   static void registerErrorCallback(const PrintCallback &callback) {
-    _errorCallbacks.push_back(callback);
+    m_errorCallbacks.push_back(callback);
   }
 
   static void registerPrintCallback(const PrintCallback &callback) {
-    _printCallbacks.push_back(callback);
+    m_printCallbacks.push_back(callback);
   }
 
   static void printfunc(HSQUIRRELVM v, const SQChar *s, ...);
@@ -114,10 +115,10 @@ private:
   static void errorfunc(HSQUIRRELVM v, const SQChar *s, ...);
 
 private:
-  inline static HSQUIRRELVM _vm{};
-  std::vector<std::unique_ptr<Pack>> _packs;
-  inline static std::vector<PrintCallback> _errorCallbacks;
-  inline static std::vector<PrintCallback> _printCallbacks;
+  inline static HSQUIRRELVM m_vm{};
+  std::vector<std::unique_ptr<Pack>> m_packs;
+  inline static std::vector<PrintCallback> m_errorCallbacks;
+  inline static std::vector<PrintCallback> m_printCallbacks;
 
 private:
   static Engine *g_pEngine;

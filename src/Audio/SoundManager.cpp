@@ -1,55 +1,63 @@
 #include <memory>
-#include "engge/Engine/EngineSettings.hpp"
-#include "engge/Entities/Entity.hpp"
-#include "engge/System/Locator.hpp"
-#include "engge/System/Logger.hpp"
-#include "engge/Audio/SoundDefinition.hpp"
-#include "engge/Audio/SoundId.hpp"
-#include "engge/Audio/SoundManager.hpp"
+#include <ngf/Audio/AudioSystem.h>
+#include <engge/Engine/Engine.hpp>
+#include <engge/Engine/EngineSettings.hpp>
+#include <engge/Entities/Entity.hpp>
+#include <engge/EnggeApplication.hpp>
+#include <engge/System/Locator.hpp>
+#include <engge/System/Logger.hpp>
+#include <engge/Audio/SoundDefinition.hpp>
+#include <engge/Audio/SoundId.hpp>
+#include <engge/Audio/SoundManager.hpp>
 
 namespace ng {
 SoundManager::SoundManager() = default;
 
-SoundId *SoundManager::getSound(size_t index) {
-  if (index < 1 || index > _soundIds.size())
+std::shared_ptr<SoundId> SoundManager::getSound(size_t index) {
+  if (index < 1 || index > m_soundIds.size())
     return nullptr;
-  return _soundIds.at(index - 1).get();
+  return m_soundIds[index - 1];
 }
 
-int SoundManager::getSlotIndex() {
-  for (size_t i = 0; i < _soundIds.size(); i++) {
-    if (_soundIds.at(i) == nullptr || !_soundIds.at(i)->isPlaying())
-      return i;
-  }
-  return -1;
-}
-
-SoundDefinition *SoundManager::defineSound(const std::string &name) {
+std::shared_ptr<SoundDefinition> SoundManager::defineSound(const std::string &name) {
   if (!Locator<EngineSettings>::get().hasEntry(name))
     return nullptr;
 
-  auto sound = std::make_unique<SoundDefinition>(name);
-  auto pSound = sound.get();
-  _sounds.push_back(std::move(sound));
-  return pSound;
+  auto sound = std::make_shared<SoundDefinition>(name);
+  m_sounds.push_back(sound);
+  return sound;
 }
 
-SoundId *SoundManager::playSound(SoundDefinition *pSoundDefinition, int loopTimes, int id) {
-  return play(pSoundDefinition, SoundCategory::Sound, loopTimes, id);
+std::shared_ptr<SoundId> SoundManager::playSound(std::shared_ptr<SoundDefinition> soundDefinition,
+                                                 int loopTimes,
+                                                 const ngf::TimeSpan &fadeInTime,
+                                                 int id) {
+  return play(soundDefinition, SoundCategory::Sound, loopTimes, fadeInTime, id);
 }
 
-SoundId *SoundManager::playTalkSound(SoundDefinition *pSoundDefinition, int loopTimes, int id) {
-  return play(pSoundDefinition, SoundCategory::Talk, loopTimes, id);
+std::shared_ptr<SoundId> SoundManager::playTalkSound(std::shared_ptr<SoundDefinition> soundDefinition,
+                                                     int loopTimes,
+                                                     const ngf::TimeSpan &fadeInTime,
+                                                     int id) {
+  return play(soundDefinition, SoundCategory::Talk, loopTimes, fadeInTime, id);
 }
 
-SoundId *SoundManager::playMusic(SoundDefinition *pSoundDefinition, int loopTimes) {
-  return play(pSoundDefinition, SoundCategory::Music, loopTimes);
+std::shared_ptr<SoundId> SoundManager::playMusic(std::shared_ptr<SoundDefinition> soundDefinition,
+                                                 int loopTimes,
+                                                 const ngf::TimeSpan &fadeInTime) {
+  return play(soundDefinition, SoundCategory::Music, loopTimes, fadeInTime);
 }
 
-SoundId *SoundManager::play(SoundDefinition *pSoundDefinition, SoundCategory category, int loopTimes, int id) {
-  auto soundId = std::make_unique<SoundId>(*this, pSoundDefinition, category);
-  soundId->setEntity(id);
-  auto index = getSlotIndex();
+std::shared_ptr<SoundId> SoundManager::play(std::shared_ptr<SoundDefinition> soundDefinition,
+                                            SoundCategory category,
+                                            int loopTimes,
+                                            const ngf::TimeSpan &fadeInTime,
+                                            int id) {
+  soundDefinition->load();
+  auto
+      sound = m_pEngine->getApplication()->getAudioSystem().playSound(soundDefinition->m_buffer, loopTimes, fadeInTime);
+  auto soundId = std::make_shared<SoundId>(*this, soundDefinition, sound, category, id);
+  auto index = sound->get().getChannel();
   if (index == -1) {
     error("cannot play sound no more channel available");
     return nullptr;
@@ -63,73 +71,66 @@ SoundId *SoundManager::play(SoundDefinition *pSoundDefinition, SoundCategory cat
   case SoundCategory::Talk:sCategory = "talk";
     break;
   }
-  //trace("[{}] loop {} {} {}", index, loopTimes, sCategory, pSoundDefinition->getPath());
-  SoundId *pSoundId = soundId.get();
-  _soundIds.at(index) = std::move(soundId);
-  pSoundId->play(loopTimes);
-  return pSoundId;
+  trace("[{}] loop {} {} {}", index, loopTimes, sCategory, soundDefinition->getPath());
+  m_soundIds[index] = soundId;
+  return soundId;
 }
 
 void SoundManager::stopAllSounds() {
   trace("stopAllSounds");
-  for (auto &_soundId : _soundIds) {
-    if (_soundId) {
-      _soundId.reset();
-    }
+  for (auto channel : m_pEngine->getApplication()->getAudioSystem()) {
+    channel.stop();
+  }
+  for (auto &soundId : m_soundIds) {
+    soundId.reset();
   }
 }
 
-void SoundManager::stopSound(SoundId *pSound) {
-  if (!pSound)
-    return;
-  for (auto &_soundId : _soundIds) {
-    if (_soundId && _soundId.get() == pSound) {
-      _soundId.reset();
-      return;
-    }
-  }
-}
-
-void SoundManager::stopSound(const SoundDefinition *pSoundDef) {
-  trace("stopSound (sound definition: {})", pSoundDef->getPath());
-  for (size_t i = 1; i <= getSize(); i++) {
-    auto &&sound = getSound(i);
-    if (sound && pSoundDef->getId() == sound->getId()) {
-      stopSound(sound);
+void SoundManager::stopSound(std::shared_ptr<SoundDefinition> soundDef) {
+  trace("stopSound (sound definition: {})", soundDef->getPath());
+  for (size_t i = 0; i < getSize(); i++) {
+    auto sound = m_soundIds[i];
+    if (sound && soundDef.get()->getId() == sound->getId()) {
+      sound->getSoundHandle()->get().stop();
+      m_soundIds[i].reset();
     }
   }
 }
 
 void SoundManager::setVolume(const SoundDefinition *pSoundDef, float volume) {
+  volume = std::clamp(volume, 0.f, 1.f);
   trace("setVolume (sound definition: {})", pSoundDef->getPath());
   for (size_t i = 1; i <= getSize(); i++) {
     auto &&sound = getSound(i);
     if (sound && pSoundDef->getId() == sound->getId()) {
-      sound->setVolume(volume);
+      sound->getSoundHandle()->get().setVolume(volume);
     }
   }
 }
 
-void SoundManager::update(const sf::Time &elapsed) {
-  for (auto &&soundId : _soundIds) {
+void SoundManager::update(const ngf::TimeSpan &elapsed) {
+  for (auto &&soundId : m_soundIds) {
     if (soundId) {
       soundId->update(elapsed);
+      if (soundId->getSoundHandle()->get().getStatus() == ngf::AudioChannel::Status::Stopped) {
+        soundId.reset();
+      }
     }
   }
 }
 
 void SoundManager::pauseAllSounds() {
-  for (auto &&soundId : _soundIds) {
+  for (auto soundId : m_soundIds) {
     if (soundId) {
-      soundId->pause();
+      soundId->getSoundHandle()->get().pause();
     }
   }
 }
 
 void SoundManager::resumeAllSounds() {
-  for (auto &&soundId : _soundIds) {
-    if (soundId) {
-      soundId->resume();
+  for (auto &soundId : m_soundIds) {
+    if (soundId && soundId->getSoundHandle()->get().getStatus() == ngf::AudioChannel::Status::Paused) {
+      soundId->getSoundHandle()->get().play();
     }
   }
 }

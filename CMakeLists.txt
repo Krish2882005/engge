@@ -6,46 +6,24 @@ project("${appName}" LANGUAGES CXX)
 
 # Compiler flags
 set (SQ_DISABLE_INSTALLER ON)
-
-# Dependencies
-find_package (SFML REQUIRED COMPONENTS system window graphics audio)
-find_package (ImGui-SFML REQUIRED)
+set (NGF_BUILD_DEMOS OFF)
+set (NGF_BUILD_EXAMPLES OFF)
+set (NGF_BUILD_TESTS OFF)
+set (NGF_BUILD_DOCUMENTATION OFF)
 
 # Sources
 add_subdirectory(src)
 add_subdirectory(extlibs/squirrel)
-add_subdirectory(extlibs/clipper)
+add_subdirectory(extlibs/ngf/)
 
 # Install misc. files
 install(FILES LICENSE DESTINATION .)
 
-# Install libraries on Linux
+# Copy dependencies
 if ("${CMAKE_SYSTEM_NAME}" STREQUAL "Linux")
-
-    install(FILES "${ImGui-SFML_DIR}/../../libImGui-SFML.so" DESTINATION .)
-    install(DIRECTORY "${SFML_DIR}/../../" DESTINATION . FILES_MATCHING PATTERN "libsfml*")
-
-    install(CODE "execute_process(COMMAND patchelf --remove-needed libImGui-SFML.so ./src/engge)")
-    install(CODE "execute_process(COMMAND patchelf --add-needed ./libImGui-SFML.so ./src/engge)")
-    install(CODE "execute_process(COMMAND patchelf --remove-needed libsfml-audio.so.2.5 ./src/engge)")
-    install(CODE "execute_process(COMMAND patchelf --add-needed ./libsfml-audio.so.2.5 ./src/engge)")
-    install(CODE "execute_process(COMMAND patchelf --remove-needed libsfml-system.so.2.5 ./src/engge)")
-    install(CODE "execute_process(COMMAND patchelf --add-needed ./libsfml-system.so.2.5 ./src/engge)")
-    install(CODE "execute_process(COMMAND patchelf --remove-needed libsfml-window.so.2.5 ./src/engge)")
-    install(CODE "execute_process(COMMAND patchelf --add-needed ./libsfml-window.so.2.5 ./src/engge)")
-    install(CODE "execute_process(COMMAND patchelf --remove-needed libsfml-graphics.so.2.5 ./src/engge)")
-    install(CODE "execute_process(COMMAND patchelf --add-needed ./libsfml-graphics.so.2.5 ./src/engge)")
-
-# Install libraries on Windows
-elseif("${CMAKE_SYSTEM_NAME}" STREQUAL "Windows")
-
-    install(FILES "${ImGui-SFML_DIR}/../../../bin/ImGui-SFML.dll" DESTINATION .)
-    install(FILES "${SFML_DIR}/../../../bin/openal32.dll" DESTINATION .)
-    install(FILES "${SFML_DIR}/../../../bin/sfml-audio-2.dll" DESTINATION .)
-    install(FILES "${SFML_DIR}/../../../bin/sfml-graphics-2.dll" DESTINATION .)
-    install(FILES "${SFML_DIR}/../../../bin/sfml-system-2.dll" DESTINATION .)
-    install(FILES "${SFML_DIR}/../../../bin/sfml-window-2.dll" DESTINATION .)
-
+elseif ("${CMAKE_SYSTEM_NAME}" STREQUAL "Windows")
+	install(FILES "${VCPKG_BIN_DIR}/glew32.dll" DESTINATION "bin/")
+	install(FILES "${VCPKG_BIN_DIR}/SDL2.dll" DESTINATION "bin/")
 endif()
 
 target_compile_features("${appName}" PRIVATE cxx_std_17)
@@ -57,7 +35,8 @@ if (MSVC)
 else()
     # lots of warnings and all warnings as errors
     # TODO: treat warnings as errors: -Werror
-    target_compile_options("${appName}" PRIVATE -Wall -Wextra -pedantic-errors)
+    # -pedantic-errors reports error library {fmt}
+    target_compile_options("${appName}" PRIVATE -Wall -Wextra)
 endif()
 
 # Configure CPack
@@ -65,7 +44,7 @@ function(get_short_system_name variable)
 	if ("${CMAKE_SYSTEM_NAME}" STREQUAL "Darwin")
 		set(${variable} "OSX" PARENT_SCOPE)
 	elseif("${CMAKE_SYSTEM_NAME}" STREQUAL "Windows")
-		set(${variable} "Win32" PARENT_SCOPE)
+		set(${variable} "Win64" PARENT_SCOPE)
 	else()
 		set(${variable} "${CMAKE_SYSTEM_NAME}" PARENT_SCOPE)
 	endif()

@@ -2,25 +2,26 @@
 #include <string>
 #include <vector>
 #include <squirrel.h>
-#include "Function.hpp"
+#include <ngf/System/TimeSpan.h>
+#include <engge/Engine/TimeFunction.hpp>
 
 namespace ng {
-class Callback : public TimeFunction {
-private:
-  bool _callbackDone{false};
-  int _id{0};
-  std::string _method{};
-  HSQOBJECT _arg;
-
+class Callback final : public TimeFunction {
 public:
-  Callback(int id, sf::Time duration, std::string method, HSQOBJECT arg);
-  ~Callback() override;
+  Callback(int id, ngf::TimeSpan duration, std::string method, HSQOBJECT arg);
+  ~Callback() final;
 
-  [[nodiscard]] int getId() const { return _id; }
-  [[nodiscard]] const std::string& getMethod() const { return _method; }
-  [[nodiscard]] HSQOBJECT getArgument() const { return _arg; }
+  [[nodiscard]] int getId() const { return m_id; }
+  [[nodiscard]] const std::string& getMethod() const { return m_method; }
+  [[nodiscard]] HSQOBJECT getArgument() const { return m_arg; }
 
 private:
-  void onElapsed() override;
+  void onElapsed() final;
+
+private:
+  bool m_callbackDone{false};
+  int m_id{0};
+  std::string m_method{};
+  HSQOBJECT m_arg;
 };
 }

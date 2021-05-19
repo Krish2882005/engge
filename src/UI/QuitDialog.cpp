@@ -1,68 +1,76 @@
-#include "_ControlConstants.hpp"
-#include "engge/Engine/Engine.hpp"
-#include "engge/Graphics/FntFont.hpp"
-#include "engge/Graphics/Screen.hpp"
-#include "engge/Graphics/SpriteSheet.hpp"
-#include "engge/Graphics/Text.hpp"
-#include "engge/UI/QuitDialog.hpp"
+#include "ControlConstants.hpp"
+#include "Button.hpp"
+#include <engge/EnggeApplication.hpp>
+#include <engge/Engine/Engine.hpp>
+#include <engge/Graphics/Screen.hpp>
+#include <engge/Graphics/SpriteSheet.hpp>
+#include <engge/UI/QuitDialog.hpp>
 #include <utility>
-#include <imgui.h>
+#include <ngf/Graphics/FntFont.h>
+#include <ngf/Graphics/RectangleShape.h>
+#include <ngf/Graphics/Sprite.h>
+#include <ngf/System/Mouse.h>
+#include "Util/Util.hpp"
 
 namespace ng {
-class _BackButton : public sf::Drawable {
+class BackButton final : public Control {
 public:
-  typedef std::function<void()> Callback;
+  using Callback = std::function<void()>;
 
 public:
-  _BackButton(int id, bool value, Callback callback, bool enabled = true)
-      : _id(id), _isEnabled(enabled), _value(value), _callback(std::move(callback)) {
+  BackButton(int id, bool value, Callback callback, bool enabled = true)
+      : Control(enabled), m_id(id), m_value(value), m_callback(std::move(callback)) {
   }
 
-  void setEngine(Engine *pEngine) {
-    _pEngine = pEngine;
-
-    const FntFont &uiFontLarge = _pEngine->getTextureManager().getFntFont("UIFontLarge.fnt");
-    text.setFont(uiFontLarge);
-    text.setString(_pEngine->getText(_id));
-    auto textRect = text.getLocalBounds();
-    auto originX = _value ? textRect.width : 0;
-    auto x = _value ? -40.f : 40.f;
-    text.setOrigin(sf::Vector2f(originX, textRect.height / 2.f));
-    text.setPosition(sf::Vector2f(Screen::Width / 2.0f + x, 400.f));
+  void draw(ngf::RenderTarget &target, ngf::RenderStates states) const final {
+    m_text.draw(target, states);
   }
 
-  void update(sf::Vector2f pos) {
-    auto textRect = text.getGlobalBounds();
-    sf::Color color;
-    if (!_isEnabled) {
-      color = _ControlConstants::DisabledColor;
-    } else if (textRect.contains((sf::Vector2f) pos)) {
-      color = _ControlConstants::HoveColor;
-      bool isDown = sf::Mouse::isButtonPressed(sf::Mouse::Button::Left);
-      ImGuiIO &io = ImGui::GetIO();
-      if (!io.WantCaptureMouse && _wasMouseDown && !isDown) {
-        _callback();
-      }
-      _wasMouseDown = isDown;
-    } else {
-      color = _ControlConstants::NormalColor;
+  bool contains(glm::vec2 pos) const final {
+    auto textRect = ng::getGlobalBounds(m_text);
+    return textRect.contains((glm::vec2) pos);
+  }
+
+  void onEngineSet() final {
+    m_text.setFont(m_pEngine->getResourceManager().getFntFont("UIFontLarge.fnt"));
+    m_text.setWideString(Engine::getText(m_id));
+    auto textRect = m_text.getLocalBounds();
+    auto originX = m_value ? textRect.getWidth() : 0;
+    auto x = m_value ? -60.f : 60.f;
+    m_text.getTransform().setOrigin({originX, textRect.getHeight() / 2.f});
+    m_text.getTransform().setPosition({Screen::Width / 2.0f + x, 400.f});
+  }
+
+  void onStateChanged() final {
+    ngf::Color color;
+    switch (m_state) {
+    case ControlState::Disabled:color = ControlConstants::DisabledColor;
+      break;
+    case ControlState::None:color = ControlConstants::NormalColor;
+      break;
+    case ControlState::Hover:color = ControlConstants::HoverColor;
+      break;
     }
-    text.setFillColor(color);
+    m_text.setColor(color);
+  }
+
+  void onClick() final {
+    if (m_callback) {
+      m_callback();
+    }
+  }
+
+  void update(const ngf::TimeSpan &elapsed, glm::vec2 pos) final {
+    Control::update(elapsed, pos);
+    auto x = m_value ? -60.f : 60.f;
+    m_text.getTransform().setPosition(m_shakeOffset + glm::vec2{Screen::Width / 2.0f + x, 400.f});
   }
 
 private:
-  void draw(sf::RenderTarget &target, sf::RenderStates states) const override {
-    target.draw(text, states);
-  }
-
-private:
-  Engine *_pEngine{nullptr};
-  int _id{0};
-  bool _isEnabled{true};
-  bool _value{false};
-  bool _wasMouseDown{false};
-  Callback _callback;
-  Text text;
+  int m_id{0};
+  bool m_value{false};
+  Callback m_callback;
+  ng::Text m_text;
 };
 
 struct QuitDialog::Impl {
@@ -72,120 +80,119 @@ struct QuitDialog::Impl {
     static constexpr int QuitText = 99909;
   };
 
-  Engine *_pEngine{nullptr};
-  SpriteSheet _saveLoadSheet;
-  Text _headingText;
-  std::vector<_BackButton> _buttons;
-  Callback _callback{nullptr};
+  Engine *m_pEngine{nullptr};
+  SpriteSheet m_saveLoadSheet;
+  ng::Text m_headingText;
+  std::vector<BackButton> m_buttons;
+  Callback m_callback{nullptr};
 
   void setHeading(int id) {
-    _headingText.setString(_pEngine->getText(id));
-    auto textRect = _headingText.getGlobalBounds();
-    _headingText.setPosition(sf::Vector2f((Screen::Width - textRect.width) / 2.f, 260.f));
+    m_headingText.setWideString(Engine::getText(id));
+    auto textRect = m_headingText.getLocalBounds();
+    m_headingText.getTransform().setPosition({(Screen::Width - textRect.getWidth()) / 2.f, 260.f});
   }
 
   void updateState() {
-    _buttons.clear();
+    m_buttons.clear();
 
     setHeading(Ids::QuitText);
 
-    _buttons.emplace_back(Ids::Yes, true, [this]() {
-      if (_callback)
-        _callback(true);
+    m_buttons.emplace_back(Ids::Yes, true, [this]() {
+      if (m_callback)
+        m_callback(true);
     });
-    _buttons.emplace_back(Ids::No, false, [this]() {
-      if (_callback)
-        _callback(false);
+    m_buttons.emplace_back(Ids::No, false, [this]() {
+      if (m_callback)
+        m_callback(false);
     });
 
-    for (auto &button : _buttons) {
-      button.setEngine(_pEngine);
+    for (auto &button : m_buttons) {
+      button.setEngine(m_pEngine);
     }
   }
 
   void setEngine(Engine *pEngine) {
-    _pEngine = pEngine;
+    m_pEngine = pEngine;
     if (!pEngine)
       return;
 
-    ResourceManager &tm = pEngine->getTextureManager();
-    _saveLoadSheet.setTextureManager(&tm);
-    _saveLoadSheet.load("SaveLoadSheet");
+    m_saveLoadSheet.setTextureManager(&pEngine->getResourceManager());
+    m_saveLoadSheet.load("SaveLoadSheet");
 
-    const FntFont &headingFont = _pEngine->getTextureManager().getFntFont("UIFontMedium.fnt");
-    _headingText.setFont(headingFont);
-    _headingText.setFillColor(sf::Color::White);
+    auto &headingFont = m_pEngine->getResourceManager().getFntFont("UIFontMedium.fnt");
+    m_headingText.setFont(headingFont);
+    m_headingText.setColor(ngf::Colors::White);
 
     updateState();
   }
 
-  void draw(sf::RenderTarget &target, sf::RenderStates) {
+  void draw(ngf::RenderTarget &target, ngf::RenderStates) {
     const auto view = target.getView();
-    auto viewRect = sf::FloatRect(0, 0, 320, 180);
-    target.setView(sf::View(viewRect));
+    auto viewRect = ngf::frect::fromPositionSize({0, 0}, {320, 180});
+    target.setView(ngf::View(viewRect));
 
-    sf::Color backColor{0, 0, 0, 128};
-    sf::RectangleShape fadeShape;
-    fadeShape.setSize(sf::Vector2f(viewRect.width, viewRect.height));
-    fadeShape.setFillColor(backColor);
-    target.draw(fadeShape);
+    ngf::Color backColor{0, 0, 0, 128};
+    ngf::RectangleShape fadeShape;
+    fadeShape.setSize(viewRect.getSize());
+    fadeShape.setColor(backColor);
+    fadeShape.draw(target, {});
 
     // draw background
-    auto viewCenter = sf::Vector2f(viewRect.width / 2, viewRect.height / 2);
-    auto rect = _saveLoadSheet.getRect("error_dialog_small");
-    sf::Sprite sprite;
-    sprite.setPosition(viewCenter);
-    sprite.setTexture(_saveLoadSheet.getTexture());
-    sprite.setOrigin(static_cast<float>(rect.width / 2), static_cast<float>(rect.height / 2));
+    auto viewCenter = glm::vec2(viewRect.getWidth() / 2, viewRect.getHeight() / 2);
+    auto rect = m_saveLoadSheet.getRect("error_dialog_small");
+    ngf::Sprite sprite;
+    sprite.getTransform().setPosition(viewCenter);
+    sprite.setTexture(*m_saveLoadSheet.getTexture());
+    sprite.getTransform().setOrigin({static_cast<float>(rect.getWidth() / 2),
+                                     static_cast<float>(rect.getHeight() / 2)});
     sprite.setTextureRect(rect);
-    target.draw(sprite);
+    sprite.draw(target, {});
 
-    viewRect = sf::FloatRect(0, 0, Screen::Width, Screen::Height);
-    target.setView(sf::View(viewRect));
+    viewRect = ngf::frect::fromPositionSize({0, 0}, {Screen::Width, Screen::Height});
+    target.setView(ngf::View(viewRect));
 
     // heading
-    target.draw(_headingText);
+    m_headingText.draw(target, {});
 
     // controls
-    for (auto &button : _buttons) {
-      target.draw(button);
+    for (auto &button : m_buttons) {
+      button.draw(target, {});
     }
     target.setView(view);
   }
 
-  void update(const sf::Time &) {
-    auto pos = (sf::Vector2f) _pEngine->getWindow().mapPixelToCoords(sf::Mouse::getPosition(_pEngine->getWindow()),
-                                                                     sf::View(sf::FloatRect(0,
-                                                                                            0,
-                                                                                            Screen::Width,
-                                                                                            Screen::Height)));
-    for (auto &button : _buttons) {
-      button.update(pos);
+  void update(const ngf::TimeSpan &elapsed) {
+    auto pos = m_pEngine->getApplication()->getRenderTarget()->mapPixelToCoords(
+        ngf::Mouse::getPosition(),
+        ngf::View(ngf::frect::fromPositionSize(
+            {0, 0}, {Screen::Width, Screen::Height})));
+    for (auto &button : m_buttons) {
+      button.update(elapsed, pos);
     }
   }
 };
 
 QuitDialog::QuitDialog()
-    : _pImpl(std::make_unique<Impl>()) {
+  : m_pImpl(std::make_unique<Impl>()) {
 }
 
 QuitDialog::~QuitDialog() = default;
 
-void QuitDialog::setEngine(Engine *pEngine) { _pImpl->setEngine(pEngine); }
+void QuitDialog::setEngine(Engine *pEngine) { m_pImpl->setEngine(pEngine); }
 
-void QuitDialog::draw(sf::RenderTarget &target, sf::RenderStates states) const {
-  _pImpl->draw(target, states);
+void QuitDialog::draw(ngf::RenderTarget &target, ngf::RenderStates states) const {
+  m_pImpl->draw(target, states);
 }
 
-void QuitDialog::update(const sf::Time &elapsed) {
-  _pImpl->update(elapsed);
+void QuitDialog::update(const ngf::TimeSpan &elapsed) {
+  m_pImpl->update(elapsed);
 }
 
 void QuitDialog::setCallback(Callback callback) {
-  _pImpl->_callback = std::move(callback);
+  m_pImpl->m_callback = std::move(callback);
 }
 
 void QuitDialog::updateLanguage() {
-  _pImpl->updateState();
+  m_pImpl->updateState();
 }
 }

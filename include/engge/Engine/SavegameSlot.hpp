@@ -1,15 +1,15 @@
-#include <string>
-#include <SFML/System/Time.hpp>
-
 #pragma once
+#include <filesystem>
+#include <string>
+#include <ngf/System/TimeSpan.h>
 
 namespace ng {
 class SavegameSlot {
 public:
   int slot{0};
   time_t savetime{};
-  sf::Time gametime;
-  std::string path;
+  ngf::TimeSpan gametime;
+  std::filesystem::path path;
   bool easyMode{false};
 
   [[nodiscard]] std::wstring getSaveTimeString() const;

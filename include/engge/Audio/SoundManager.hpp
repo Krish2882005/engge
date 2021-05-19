@@ -16,53 +16,64 @@ class SoundManager {
 public:
   SoundManager();
 
-  void setEngine(Engine *pEngine) { _pEngine = pEngine; }
-  [[nodiscard]] Engine *getEngine() const { return _pEngine; }
+  void setEngine(Engine *pEngine) { m_pEngine = pEngine; }
+  [[nodiscard]] Engine *getEngine() const { return m_pEngine; }
 
-  SoundDefinition *defineSound(const std::string &name);
-  SoundId *playSound(SoundDefinition *pSoundDefinition, int loopTimes = 1, int id = 0);
-  SoundId *playTalkSound(SoundDefinition *pSoundDefinition, int loopTimes = 1, int id = 0);
-  SoundId *playMusic(SoundDefinition *pSoundDefinition, int loopTimes = 1);
+  std::shared_ptr<SoundDefinition> defineSound(const std::string &name);
+  std::shared_ptr<SoundId> playSound(std::shared_ptr<SoundDefinition> soundDefinition,
+                                     int loopTimes = 1,
+                                     const ngf::TimeSpan &fadeInTime = ngf::TimeSpan::Zero,
+                                     int id = 0);
+  std::shared_ptr<SoundId> playTalkSound(std::shared_ptr<SoundDefinition> soundDefinition,
+                                         int loopTimes = 1,
+                                         const ngf::TimeSpan &fadeInTime = ngf::TimeSpan::Zero,
+                                         int id = 0);
+  std::shared_ptr<SoundId> playMusic(std::shared_ptr<SoundDefinition> soundDefinition,
+                                     int loopTimes = 1,
+                                     const ngf::TimeSpan &fadeInTime = ngf::TimeSpan::Zero);
 
   void pauseAllSounds();
   void resumeAllSounds();
 
   void stopAllSounds();
-  void stopSound(SoundId *pSound);
-  void stopSound(const SoundDefinition *pSoundDefinition);
+  void stopSound(std::shared_ptr<SoundDefinition> soundDefinition);
 
-  void setMasterVolume(float volume) { _masterVolume = volume; }
-  [[nodiscard]] float getMasterVolume() const { return _masterVolume; }
-  void setSoundVolume(float volume) { _soundVolume = volume; }
-  [[nodiscard]] float getSoundVolume() const { return _soundVolume; }
-  void setMusicVolume(float volume) { _musicVolume = volume; }
-  [[nodiscard]] float getMusicVolume() const { return _musicVolume; }
-  void setTalkVolume(float volume) { _talkVolume = volume; }
-  [[nodiscard]] float getTalkVolume() const { return _talkVolume; }
+  void setMasterVolume(float volume) { m_masterVolume = std::clamp(volume, 0.f, 1.f); }
+  [[nodiscard]] float getMasterVolume() const { return m_masterVolume; }
+  void setSoundVolume(float volume) { m_soundVolume = std::clamp(volume, 0.f, 1.f); }
+  [[nodiscard]] float getSoundVolume() const { return m_soundVolume; }
+  void setMusicVolume(float volume) { m_musicVolume = std::clamp(volume, 0.f, 1.f); }
+  [[nodiscard]] float getMusicVolume() const { return m_musicVolume; }
+  void setTalkVolume(float volume) { m_talkVolume = std::clamp(volume, 0.f, 1.f); }
+  [[nodiscard]] float getTalkVolume() const { return m_talkVolume; }
   void setVolume(const SoundDefinition *pSoundDefinition, float volume);
 
-  SoundId *getSound(size_t index);
-  std::vector<std::unique_ptr<SoundDefinition>> &getSoundDefinitions() { return _sounds; }
-  std::array<std::unique_ptr<SoundId>, 32> &getSounds() { return _soundIds; }
+  std::shared_ptr<SoundId> getSound(size_t index);
+  std::vector<std::shared_ptr<SoundDefinition>> &getSoundDefinitions() { return m_sounds; }
+  std::array<std::shared_ptr<SoundId>, 32> &getSounds() { return m_soundIds; }
 
-  [[nodiscard]] size_t getSize() const { return _soundIds.size(); }
+  void setSoundHover(std::shared_ptr<SoundDefinition> sound) { m_pSoundHover = sound; }
+  [[nodiscard]] std::shared_ptr<SoundDefinition> getSoundHover() const { return m_pSoundHover; }
 
-  void update(const sf::Time &elapsed);
+  [[nodiscard]] size_t getSize() const { return m_soundIds.size(); }
 
-private:
-  int getSlotIndex();
-  SoundId *play(SoundDefinition *pSoundDefinition,
-                SoundCategory category,
-                int loopTimes = 1,
-                int id = 0);
+  void update(const ngf::TimeSpan &elapsed);
 
 private:
-  std::vector<std::unique_ptr<SoundDefinition>> _sounds;
-  std::array<std::unique_ptr<SoundId>, 32> _soundIds;
-  Engine *_pEngine{nullptr};
-  float _masterVolume{1};
-  float _soundVolume{1};
-  float _musicVolume{1};
-  float _talkVolume{1};
+  std::shared_ptr<SoundId> play(std::shared_ptr<SoundDefinition> soundDefinition,
+                                SoundCategory category,
+                                int loopTimes = 1,
+                                const ngf::TimeSpan &fadeInTime = ngf::TimeSpan::Zero,
+                                int id = 0);
+
+private:
+  std::vector<std::shared_ptr<SoundDefinition>> m_sounds;
+  std::array<std::shared_ptr<SoundId>, 32> m_soundIds;
+  Engine *m_pEngine{nullptr};
+  float m_masterVolume{1};
+  float m_soundVolume{1};
+  float m_musicVolume{1};
+  float m_talkVolume{1};
+  std::shared_ptr<SoundDefinition> m_pSoundHover{nullptr};
 };
 } // namespace ng
